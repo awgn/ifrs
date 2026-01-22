@@ -1,5 +1,5 @@
 use clap::Parser;
-use colored::*;
+use owo_colors::OwoColorize;
 use anyhow::Result;
 
 mod ifr;
@@ -79,7 +79,7 @@ fn main() -> Result<()> {
         }
 
         // --- Header (Name + Link Status) ---
-        print!("{}", name.bold().green());
+        print!("{}", name.bold().blue());
 
         let mut link_detected = iif.ethtool_link().unwrap_or(false);
         #[cfg(not(target_os = "linux"))]
@@ -103,14 +103,14 @@ fn main() -> Result<()> {
         // --- Hardware Address (MAC) ---
         if let Ok(mac) = iif.mac() {
             if !mac.is_empty() {
-                println!("{}MAC:     {}", indent, mac.yellow());
+                println!("{}MAC:     {}", indent, mac.blue());
             }
         }
 
         // --- IP Addresses ---
         // IPv4
         for (addr, _mask, prefix) in iif.inet_addrs() {
-            println!("{}IPv4:    {}/{}", indent, addr.cyan(), prefix);
+            println!("{}IPv4:    {}/{}", indent, addr.blue(), prefix);
         }
         // IPv6
         if let Ok(addrs) = proc::get_inet6_addr(name) {
@@ -127,7 +127,7 @@ fn main() -> Result<()> {
              let bus_str = unsafe { std::ffi::CStr::from_ptr(info.bus_info.as_ptr()) }.to_string_lossy();
              bus_str_owned = bus_str.to_string();
 
-             println!("{}Driver:  {} (v: {})", indent, drv_str.white().bold(), ver_str);
+             println!("{}Driver:  {} (v: {})", indent, drv_str.blue().bold(), ver_str);
              if !bus_str_owned.is_empty() {
                   println!("{}Bus:     {}", indent, bus_str_owned);
              }
@@ -146,11 +146,11 @@ fn main() -> Result<()> {
         
         if let Some(pci_info) = pci_info_opt {
             if let Some(addr) = pci_info.pci_address() {
-                println!("{}PCI:     {}", indent, addr.bright_cyan());
+                println!("{}PCI:     {}", indent, addr.bright_blue());
             }
             
             if let (Some(vendor), Some(device)) = (&pci_info.vendor_name, &pci_info.device_name) {
-                println!("{}Device:  {} {}", indent, vendor.bright_white(), device);
+                println!("{}Device:  {} {}", indent, vendor.bright_blue(), device.bright_blue());
             } else if pci_info.vendor_id != 0 || pci_info.device_id != 0 {
                 println!("{}Device:  [{:04x}:{:04x}]", indent, pci_info.vendor_id, pci_info.device_id);
             }
