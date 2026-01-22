@@ -4,49 +4,75 @@ use anyhow::Result;
 use std::collections::HashMap;
 
 #[cfg(not(target_os = "macos"))]
-fn get_vendor_name(vendor_id: u16) -> Option<&'static str> {
-    match vendor_id {
-        0x8086 => Some("Intel Corporation"),
-        0x10ec => Some("Realtek Semiconductor Co., Ltd."),
-        0x14e4 => Some("Broadcom Inc."),
-        0x1969 => Some("Qualcomm Atheros"),
-        0x168c => Some("Qualcomm Atheros"),
-        0x10de => Some("NVIDIA Corporation"),
-        0x1022 => Some("Advanced Micro Devices, Inc. [AMD]"),
-        0x1106 => Some("VIA Technologies, Inc."),
-        0x11ab => Some("Marvell Technology Group Ltd."),
-        0x13f0 => Some("Sundance Technology Inc. / IC Plus Corp"),
-        0x1737 => Some("Linksys"),
-        0x1814 => Some("Ralink corp."),
-        0x1b21 => Some("ASMedia Technology Inc."),
-        0x8139 => Some("Realtek"),
-        0x10b7 => Some("3Com Corporation"),
-        0x1186 => Some("D-Link System Inc"),
-        0x1fc9 => Some("Tehuti Networks Ltd."),
-        0x1d6a => Some("Aquantia Corp."),
-        0x1425 => Some("Chelsio Communications Inc"),
-        0x15b3 => Some("Mellanox Technologies"),
-        _ => None,
-    }
+struct PciDb {
+    vendors: HashMap<u16, String>,
+    devices: HashMap<(u16, u16), String>,
 }
 
 #[cfg(not(target_os = "macos"))]
-fn get_common_device_name(vendor_id: u16, device_id: u16) -> Option<&'static str> {
-    match (vendor_id, device_id) {
-        (0x8086, 0x100e) => Some("82540EM Gigabit Ethernet Controller"),
-        (0x8086, 0x100f) => Some("82545EM Gigabit Ethernet Controller"),
-        (0x8086, 0x10d3) => Some("82574L Gigabit Network Connection"),
-        (0x8086, 0x1533) => Some("I210 Gigabit Network Connection"),
-        (0x8086, 0x1539) => Some("I211 Gigabit Network Connection"),
-        (0x8086, 0x15b7) => Some("Ethernet Connection"),
-        (0x8086, 0x15b8) => Some("Ethernet Connection"),
-        (0x10ec, 0x8168) => Some("RTL8111/8168/8411 PCI Express Gigabit Ethernet Controller"),
-        (0x10ec, 0x8169) => Some("RTL8169 PCI Gigabit Ethernet Controller"),
-        (0x10ec, 0x8136) => Some("RTL810xE PCI Express Fast Ethernet controller"),
-        (0x14e4, 0x1677) => Some("NetXtreme BCM5751 Gigabit Ethernet"),
-        (0x14e4, 0x165f) => Some("NetXtreme BCM5720 Gigabit Ethernet"),
-        (0x14e4, 0x4331) => Some("BCM4331 802.11a/b/g/n"),
-        _ => None,
+impl PciDb {
+    fn new() -> Self {
+        let mut db = PciDb {
+            vendors: HashMap::new(),
+            devices: HashMap::new(),
+        };
+        db.load();
+        db
+    }
+
+    fn load(&mut self) {
+        let paths = [
+            "/usr/share/hwdata/pci.ids",
+            "/usr/share/misc/pci.ids",
+            "/usr/share/pci.ids",
+        ];
+
+        for path in paths {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                self.parse(&content);
+                return;
+            }
+        }
+    }
+
+    fn parse(&mut self, content: &str) {
+        let mut current_vendor: Option<u16> = None;
+
+        for line in content.lines() {
+            if line.starts_with('#') || line.trim().is_empty() {
+                continue;
+            }
+
+            if !line.starts_with('\t') {
+                // Vendor
+                let parts: Vec<&str> = line.splitn(2, ' ').collect();
+                if parts.len() == 2 {
+                    if let Ok(id) = u16::from_str_radix(parts[0], 16) {
+                        current_vendor = Some(id);
+                        self.vendors.insert(id, parts[1].trim().to_string());
+                    }
+                }
+            } else if line.starts_with('\t') && !line.starts_with("\t\t") {
+                // Device
+                if let Some(vendor_id) = current_vendor {
+                    let line = &line[1..];
+                    let parts: Vec<&str> = line.splitn(2, ' ').collect();
+                    if parts.len() == 2 {
+                        if let Ok(dev_id) = u16::from_str_radix(parts[0], 16) {
+                            self.devices.insert((vendor_id, dev_id), parts[1].trim().to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn get_vendor(&self, id: u16) -> Option<String> {
+        self.vendors.get(&id).cloned()
+    }
+
+    fn get_device(&self, vendor: u16, device: u16) -> Option<String> {
+        self.devices.get(&(vendor, device)).cloned()
     }
 }
 
@@ -102,6 +128,7 @@ pub fn get_pci_devices() -> Result<HashMap<String, PciDeviceInfo>> {
     use pci_info::PciInfo;
     
     let mut devices = HashMap::new();
+    let db = PciDb::new();
     
     match PciInfo::enumerate_pci() {
         Ok(pci_devices) => {
@@ -142,13 +169,8 @@ pub fn get_pci_devices() -> Result<HashMap<String, PciDeviceInfo>> {
                     ..Default::default()
                 };
 
-                if let Some(vendor) = get_vendor_name(info.vendor_id) {
-                    info.vendor_name = Some(vendor.to_string());
-                }
-                
-                if let Some(device) = get_common_device_name(info.vendor_id, info.device_id) {
-                    info.device_name = Some(device.to_string());
-                }
+                info.vendor_name = db.get_vendor(info.vendor_id);
+                info.device_name = db.get_device(info.vendor_id, info.device_id);
 
                 info.subsystem_vendor = dev.subsystem_vendor_id().ok().flatten();
                 info.subsystem_device = dev.subsystem_device_id().ok().flatten();
