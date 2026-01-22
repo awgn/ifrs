@@ -61,7 +61,7 @@ fn main() -> Result<()> {
                 }
             }
         }
-        
+
         // All data gathering for an interface happens within its namespace
         let result: Result<()> = (|| {
             let iif = match ifr::Interface::new(name) {
@@ -93,25 +93,24 @@ fn main() -> Result<()> {
                  if !matched { return Ok(()); }
             }
 
-            // --- Header (Name + Namespace + Link Status) ---
-            print!("{}", name.bold().blue());
-            if let Some(netns) = &nic.netns {
-                print!(" [{}]", netns.yellow());
-            }
-
             let link_detected = iif.ethtool_link().unwrap_or(false);
             #[cfg(not(target_os = "linux"))]
             {
                 if !link_detected {
                     // On macOS, use running flag as proxy for link
-                     link_detected = iif.is_running();
+                    link_detected = iif.is_running();
                 }
             }
 
             if link_detected {
-                print!(" ({})", "LINK UP".bold().white().on_green());
+                print!("{} ", name.bold().bright_blue());
             } else {
-                 print!(" ({})", "NO LINK".red());
+                print!("{} ", name.blue());
+            }
+
+            // --- Header (Name + Namespace + Link Status) ---
+            if let Some(netns) = &nic.netns {
+                print!(" {}", netns.bright_black());
             }
 
             println!(); // End of header line
@@ -153,18 +152,18 @@ fn main() -> Result<()> {
 
             // --- PCI Info (namespace agnostic) ---
             let pci_info_opt = pci_utils::find_pci_info_for_interface(name, &bus_str_owned, &pci_devices);
-            
+
             if let Some(pci_info) = pci_info_opt {
                 if let Some(addr) = pci_info.pci_address() {
                     println!("{}PCI:     {}", indent, addr.bright_blue());
                 }
-                
+
                 if let (Some(vendor), Some(device)) = (&pci_info.vendor_name, &pci_info.device_name) {
                     println!("{}Device:  {} {}", indent, vendor.bright_blue(), device.bright_blue());
                 } else if pci_info.vendor_id != 0 || pci_info.device_id != 0 {
                     println!("{}Device:  [{:04x}:{:04x}]", indent, pci_info.vendor_id, pci_info.device_id);
                 }
-                
+
                 if cli.verbose {
                     // Verbose PCI info
                 }
