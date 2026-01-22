@@ -1,19 +1,100 @@
 use anyhow::Result;
+use std::collections::HashSet;
 
 #[cfg(target_os = "macos")]
 use crate::macos;
 
-pub fn get_if_list() -> Result<Vec<String>> {
+// This struct will hold the interface name and its network namespace, if any.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct LinuxNic {
+    pub name: String,
+    pub netns: Option<String>,
+}
+
+
+#[cfg(target_os = "linux")]
+pub fn get_if_list() -> Result<Vec<LinuxNic>> {
+    use nix::sched::{setns, CloneFlags};
+    use std::fs;
+    
+    use std::os::unix::fs::MetadataExt; // for ino()
+    use std::path::Path;
+
+    // Function to check if we are in the root network namespace
+    fn is_root_netns() -> bool {
+        let Ok(self_meta) = fs::metadata("/proc/self/ns/net") else { return false };
+        let Ok(init_meta) = fs::metadata("/proc/1/ns/net") else { return false };
+        self_meta.ino() == init_meta.ino()
+    }
+
+    let mut nics = Vec::new();
+    let mut seen_nics = HashSet::new();
+
+    // If we are not in the root netns, or we are not euid 0, just list local interfaces.
+    if !is_root_netns() || !nix::unistd::geteuid().is_root() {
+        for ifa in nix::ifaddrs::getifaddrs()? {
+            let nic = LinuxNic {
+                name: ifa.interface_name,
+                netns: None, // No specific namespace context from this perspective
+            };
+            if seen_nics.insert(nic.clone()) {
+                nics.push(nic);
+            }
+        }
+        nics.sort_by(|a, b| a.name.cmp(&b.name));
+        return Ok(nics);
+    }
+
+    // We are in the root netns and we are root. Let's scan all namespaces.
+    
+    // 1. Get interfaces from the root namespace
+    for ifa in nix::ifaddrs::getifaddrs()? {
+        let nic = LinuxNic { name: ifa.interface_name, netns: None };
+        if seen_nics.insert(nic.clone()) {
+            nics.push(nic);
+        }
+    }
+
+    // 2. Scan and switch to other namespaces
+    let ns_dir = Path::new("/var/run/netns");
+    if ns_dir.exists() {
+        let original_ns = fs::File::open("/proc/self/ns/net")?;
+        for entry in fs::read_dir(ns_dir)?.flatten() {
+            let ns_name = entry.file_name().to_string_lossy().to_string();
+            if let Ok(ns_file) = fs::File::open(entry.path()) {
+                // Switch, get interfaces, switch back
+                if setns(ns_file, CloneFlags::CLONE_NEWNET).is_ok() {
+                    if let Ok(ifaddrs) = nix::ifaddrs::getifaddrs() {
+                        for ifa in ifaddrs {
+                            let nic = LinuxNic { name: ifa.interface_name, netns: Some(ns_name.clone()) };
+                             if seen_nics.insert(nic.clone()) {
+                                nics.push(nic);
+                            }
+                        }
+                    }
+                    // Switch back to original ns
+                    let _ = setns(&original_ns, CloneFlags::CLONE_NEWNET);
+                }
+            }
+        }
+    }
+
+    nics.sort_by_key(|k| k.name.clone());
+    Ok(nics)
+}
+
+
+#[cfg(not(target_os = "linux"))]
+pub fn get_if_list() -> Result<Vec<LinuxNic>> {
     let addrs = nix::ifaddrs::getifaddrs()?;
-    let mut names = std::collections::HashSet::new();
+    let mut names = HashSet::new();
     for ifa in addrs {
         names.insert(ifa.interface_name);
     }
     let mut ret: Vec<String> = names.into_iter().collect();
     ret.sort();
-    Ok(ret)
+    Ok(ret.into_iter().map(|name| LinuxNic { name, netns: None }).collect())
 }
-
 
 
 #[derive(Default, Debug)]
@@ -105,4 +186,3 @@ pub fn get_inet6_addr(ifname: &str) -> Result<Vec<(String, u32, String)>> {
     }
     Ok(ret)
 }
-
