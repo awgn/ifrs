@@ -25,21 +25,24 @@ pub const SIOCETHTOOL: c_ulong = 0x8946;
 pub const SIOCGIFMTU: c_ulong = 0xc0206933;
 #[cfg(target_os = "macos")]
 pub const SIOCGIFMETRIC: c_ulong = 0xc020691d;
-
 #[cfg(target_os = "macos")]
-pub const SIOCETHTOOL: c_ulong = 0;
+pub const SIOCGIFMEDIA: c_ulong = 0xc030693e;
+
+
+
+
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub const SIOCGIFMTU: c_ulong = 0;
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub const SIOCGIFMETRIC: c_ulong = 0;
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-pub const SIOCETHTOOL: c_ulong = 0;
-
 // Ethtool Constants
 #[cfg(target_os = "linux")]
 pub const ETHTOOL_GDRVINFO: u32 = 0x00000003;
+#[cfg(target_os = "linux")]
+pub const ETHTOOL_GSET: u32 = 0x00000001;
+#[cfg(target_os = "linux")]
 pub const ETHTOOL_GLINK: u32 = 0x0000000a;
 
 // If flags
@@ -81,6 +84,18 @@ pub struct IfReq {
     pub ifr_ifru: IfrData,
 }
 
+#[cfg(target_os = "macos")]
+#[repr(C)]
+pub struct IfMediaReq {
+    pub ifm_name: [c_char; 16],
+    pub ifm_current: c_int,
+    pub ifm_mask: c_int,
+    pub ifm_status: c_int,
+    pub ifm_active: c_int,
+    pub ifm_count: c_int,
+    pub ifm_ulist: *mut c_int,
+}
+
 impl IfReq {
     pub fn new(name: &str) -> Self {
         let mut req: IfReq = unsafe { mem::zeroed() };
@@ -115,18 +130,45 @@ pub struct EthtoolDrvInfo {
 
 #[repr(C)]
 #[derive(Debug, Default)]
+#[cfg(target_os = "linux")]
 pub struct EthtoolValue {
     pub cmd: u32,
     pub data: u32,
 }
 
+#[repr(C)]
+#[derive(Debug, Default)]
+#[cfg(target_os = "linux")]
+pub struct EthtoolCmd {
+    pub cmd: u32,
+    pub supported: u32,
+    pub advertising: u32,
+    pub speed: u16,
+    pub duplex: u8,
+    pub port: u8,
+    pub phy_address: u8,
+    pub transceiver: u8,
+    pub autoneg: u8,
+    pub mdio_support: u8,
+    pub maxtxpkt: u32,
+    pub maxrxpkt: u32,
+    pub speed_hi: u16,
+    pub eth_tp_mdix: u8,
+    pub eth_tp_mdix_ctrl: u8,
+    pub lp_advertising: u32,
+    pub reserved: [u32; 2],
+}
+
 // IOCTL Functions
 
+#[cfg(target_os = "linux")]
 nix::ioctl_write_ptr_bad!(ioctl_ethtool, SIOCETHTOOL, IfReq);
 #[cfg(target_os = "linux")]
 nix::ioctl_read_bad!(ioctl_get_hwaddr, SIOCGIFHWADDR, IfReq);
 nix::ioctl_read_bad!(ioctl_get_mtu, SIOCGIFMTU, IfReq);
 nix::ioctl_read_bad!(ioctl_get_metric, SIOCGIFMETRIC, IfReq);
+#[cfg(target_os = "macos")]
+nix::ioctl_read_bad!(ioctl_get_media, SIOCGIFMEDIA, IfMediaReq);
 
 
 
@@ -161,6 +203,7 @@ impl Interface {
         self.flags().map(|f| f & IFF_UP != 0).unwrap_or(false)
     }
 
+    #[allow(dead_code)]
     pub fn is_running(&self) -> bool {
         // IFF_RUNNING is 0x40
         self.flags().map(|f| f & 0x40 != 0).unwrap_or(false)
@@ -168,28 +211,53 @@ impl Interface {
 
     pub fn flags_str(&self) -> String {
         let flags = match self.flags() {
-            Ok(f) => f,
+            Ok(f) => f as u16,
             Err(_) => return String::new(),
         };
 
         let mut ret = Vec::new();
-        // Standard flags
-        if flags & 0x1 != 0 { ret.push("UP"); }
-        if flags & 0x2 != 0 { ret.push("BROADCAST"); }
-        if flags & 0x4 != 0 { ret.push("DEBUG"); }
-        if flags & 0x8 != 0 { ret.push("LOOPBACK"); }
-        if flags & 0x10 != 0 { ret.push("PTP"); }
-        if flags & 0x20 != 0 { ret.push("NOTRAILERS"); }
-        if flags & 0x40 != 0 { ret.push("RUNNING"); }
-        if flags & 0x80 != 0 { ret.push("NOARP"); }
-        if flags & 0x100 != 0 { ret.push("PROMISC"); }
-        if flags & 0x200 != 0 { ret.push("ALLMULTI"); }
-        if flags & 0x400 != 0 { ret.push("MASTER"); }
-        if flags & 0x800 != 0 { ret.push("SLAVE"); }
-        if flags & 0x1000 != 0 { ret.push("MULTICAST"); }
-        if flags & 0x2000 != 0 { ret.push("PORTSEL"); }
-        if flags & 0x4000 != 0 { ret.push("AUTOMEDIA"); }
-        if flags & (0x8000u16 as i16) != 0 { ret.push("DYNAMIC"); }
+        
+        #[cfg(target_os = "macos")]
+        {
+            // macOS / BSD flags
+            if flags & 0x1 != 0 { ret.push("UP"); }
+            if flags & 0x2 != 0 { ret.push("BROADCAST"); }
+            if flags & 0x4 != 0 { ret.push("DEBUG"); }
+            if flags & 0x8 != 0 { ret.push("LOOPBACK"); }
+            if flags & 0x10 != 0 { ret.push("POINTOPOINT"); }
+            if flags & 0x20 != 0 { ret.push("SMART"); }
+            if flags & 0x40 != 0 { ret.push("RUNNING"); }
+            if flags & 0x80 != 0 { ret.push("NOARP"); }
+            if flags & 0x100 != 0 { ret.push("PROMISC"); }
+            if flags & 0x200 != 0 { ret.push("ALLMULTI"); }
+            if flags & 0x400 != 0 { ret.push("OACTIVE"); }
+            if flags & 0x800 != 0 { ret.push("SIMPLEX"); }
+            if flags & 0x1000 != 0 { ret.push("LINK0"); }
+            if flags & 0x2000 != 0 { ret.push("LINK1"); }
+            if flags & 0x4000 != 0 { ret.push("LINK2"); }
+            if flags & 0x8000 != 0 { ret.push("MULTICAST"); }
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            // Standard Linux-like flags
+            if flags & 0x1 != 0 { ret.push("UP"); }
+            if flags & 0x2 != 0 { ret.push("BROADCAST"); }
+            if flags & 0x4 != 0 { ret.push("DEBUG"); }
+            if flags & 0x8 != 0 { ret.push("LOOPBACK"); }
+            if flags & 0x10 != 0 { ret.push("PTP"); }
+            if flags & 0x20 != 0 { ret.push("NOTRAILERS"); }
+            if flags & 0x40 != 0 { ret.push("RUNNING"); }
+            if flags & 0x80 != 0 { ret.push("NOARP"); }
+            if flags & 0x100 != 0 { ret.push("PROMISC"); }
+            if flags & 0x200 != 0 { ret.push("ALLMULTI"); }
+            if flags & 0x400 != 0 { ret.push("MASTER"); }
+            if flags & 0x800 != 0 { ret.push("SLAVE"); }
+            if flags & 0x1000 != 0 { ret.push("MULTICAST"); }
+            if flags & 0x2000 != 0 { ret.push("PORTSEL"); }
+            if flags & 0x4000 != 0 { ret.push("AUTOMEDIA"); }
+            if flags & 0x8000 != 0 { ret.push("DYNAMIC"); }
+        }
 
         ret.join(" ")
     }
@@ -235,23 +303,178 @@ impl Interface {
 
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
-             Err(io::Error::new(io::ErrorKind::Unsupported, "Not supported on this OS"))
+            Err(io::Error::new(io::ErrorKind::Unsupported, "Not supported on this OS"))
+        }
+    }
+
+    pub fn media(&self) -> io::Result<String> {
+        #[cfg(target_os = "linux")]
+        {
+            let mut cmd: EthtoolCmd = Default::default();
+            cmd.cmd = ETHTOOL_GSET;
+            
+            let mut req = IfReq::new(&self.name);
+            req.ifr_ifru.ifru_data = &mut cmd as *mut _ as *mut libc::c_void;
+
+            if unsafe { ioctl_ethtool(self.sock.as_raw_fd(), &mut req) }.is_ok() {
+                let speed = (cmd.speed_hi as u32) << 16 | (cmd.speed as u32);
+                let duplex = if cmd.duplex == 0x01 { "full" } else if cmd.duplex == 0x00 { "half" } else { "unknown" };
+                let port = match cmd.port {
+                    0x00 => "TP",
+                    0x01 => "AUI",
+                    0x02 => "MII",
+                    0x03 => "FIBRE",
+                    0x04 => "BNC",
+                    _ => "unknown",
+                };
+                if speed == 0 || speed == 0xFFFF || speed == 0xFFFFFFFF {
+                    return Ok(format!("{} (unknown speed)", port));
+                }
+                return Ok(format!("{} {}Mb/s {}", port, speed, duplex));
+            }
+            Ok("unknown".to_string())
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            let mut req: IfMediaReq = unsafe { std::mem::zeroed() };
+            let bytes = self.name.as_bytes();
+            let len = std::cmp::min(bytes.len(), 15);
+            for (i, &byte) in bytes.iter().enumerate().take(len) {
+                req.ifm_name[i] = byte as libc::c_char;
+            }
+            
+            // On macOS, SIOCGIFMEDIA often requires a larger buffer or specific socket.
+            // We use a dummy list to ensure the structure is fully populated if needed.
+            let mut res = unsafe { ioctl_get_media(self.sock.as_raw_fd(), &mut req) };
+            
+            if res.is_err() {
+                // Try with different socket families as some drivers (like Wi-Fi) are picky
+                for family in [libc::AF_INET6, libc::AF_LINK] {
+                    let s = unsafe { libc::socket(family, libc::SOCK_DGRAM, 0) };
+                    if s >= 0 {
+                        res = unsafe { ioctl_get_media(s, &mut req) };
+                        unsafe { libc::close(s) };
+                        if res.is_ok() { break; }
+                    }
+                }
+            }
+
+            if res.is_ok() {
+                let active = req.ifm_active;
+                let type_ = (active & 0x000000f0) >> 4;
+                let subtype = active & 0x0000000f;
+                
+                let type_str = match type_ {
+                    2 => "Ethernet",
+                    8 => "Wi-Fi",
+                    _ => "Other",
+                };
+                
+                let subtype_str = if type_ == 2 {
+                    match subtype {
+                        0 => "autoselect",
+                        3 => "10baseT",
+                        6 => "100baseTX",
+                        12 => "1000baseT",
+                        19 => "10GbaseT",
+                        _ => "unknown",
+                    }
+                } else if type_ == 8 {
+                    match subtype {
+                        0 => "autoselect",
+                        3 => "802.11b",
+                        4 => "802.11g",
+                        5 => "802.11a",
+                        6 => "802.11n",
+                        8 => "802.11ac",
+                        11 => "802.11ax",
+                        _ => "unknown",
+                    }
+                } else {
+                    "unknown"
+                };
+                
+                let mut options = Vec::new();
+                if active & 0x00010000 != 0 { options.push("full-duplex"); }
+                if active & 0x00020000 != 0 { options.push("half-duplex"); }
+                
+                if options.is_empty() {
+                    return Ok(format!("{} {}", type_str, subtype_str));
+                } else {
+                    return Ok(format!("{} {} <{}>", type_str, subtype_str, options.join(",")));
+                }
+            }
+
+            // Fallback for macOS: use networksetup if ioctl fails or returns generic info
+            let output = std::process::Command::new("networksetup")
+                .arg("-getmedia")
+                .arg(&self.name)
+                .output();
+
+            if let Ok(out) = output {
+                let s = String::from_utf8_lossy(&out.stdout);
+                for line in s.lines() {
+                    if line.starts_with("Current:") {
+                        let val = line.trim_start_matches("Current:").trim();
+                        if val != "autoselect" && !val.is_empty() {
+                            return Ok(val.to_string());
+                        }
+                    }
+                }
+            }
+
+            Ok("unknown".to_string())
+        }
+
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            Ok("unknown".to_string())
         }
     }
 
 
 
     pub fn ethtool_link(&self) -> io::Result<bool> {
-        let mut val = EthtoolValue {
-            cmd: ETHTOOL_GLINK,
-            ..Default::default()
-        };
+        #[cfg(target_os = "linux")]
+        {
+            let mut val = EthtoolValue {
+                cmd: ETHTOOL_GLINK,
+                ..Default::default()
+            };
 
-        let mut req = IfReq::new(&self.name);
-        req.ifr_ifru.ifru_data = &mut val as *mut _ as *mut c_void;
+            let mut req = IfReq::new(&self.name);
+            req.ifr_ifru.ifru_data = &mut val as *mut _ as *mut c_void;
 
-        unsafe { ioctl_ethtool(self.sock.as_raw_fd(), &req) }.map_err(|e| io::Error::from_raw_os_error(e as i32))?;
-        Ok(val.data != 0)
+            unsafe { ioctl_ethtool(self.sock.as_raw_fd(), &req) }.map_err(|e| io::Error::from_raw_os_error(e as i32))?;
+            Ok(val.data != 0)
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            let mut req: IfMediaReq = unsafe { std::mem::zeroed() };
+            let bytes = self.name.as_bytes();
+            let len = std::cmp::min(bytes.len(), 15);
+            for (i, &byte) in bytes.iter().enumerate().take(len) {
+                req.ifm_name[i] = byte as c_char;
+            }
+            
+            match unsafe { ioctl_get_media(self.sock.as_raw_fd(), &mut req) } {
+                Ok(_) => {
+                    // IFM_AVALID = 0x00000001, IFM_ACTIVE = 0x00000002
+                    Ok((req.ifm_status & 0x00000001 != 0) && (req.ifm_status & 0x00000002 != 0))
+                }
+                Err(_) => {
+                    // Fallback to IFF_RUNNING if SIOCGIFMEDIA is not supported (e.g. some virtual interfaces)
+                    Ok(self.flags().map(|f| f & 0x40 != 0).unwrap_or(false))
+                }
+            }
+        }
+
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            Err(io::Error::new(io::ErrorKind::Unsupported, "Not supported on this OS"))
+        }
     }
 
     #[cfg(target_os = "linux")]

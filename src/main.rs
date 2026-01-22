@@ -36,6 +36,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Enumerate PCI devices once, this is namespace-agnostic
+    #[cfg(not(target_os = "macos"))]
     let pci_devices = pci_utils::get_pci_devices().unwrap_or_default();
 
     let all_interfaces = proc::get_if_list()?;
@@ -46,7 +47,7 @@ fn main() -> Result<()> {
     for nic in &all_interfaces {
         let name = &nic.name;
         // Filter by name
-        if !cli.interfaces.is_empty() && !cli.interfaces.contains(name) {
+        if !cli.interfaces.is_empty() && !cli.interfaces.iter().any(|i| name.contains(i)) {
             continue;
         }
 
@@ -82,9 +83,9 @@ fn main() -> Result<()> {
             if !cli.driver.is_empty() {
                  let mut matched = false;
                  if let Some(info) = &drv_info {
-                     let drv_str = unsafe { std::ffi::CStr::from_ptr(info.driver.as_ptr()) }.to_string_lossy();
+                     let drv_str = unsafe { std::ffi::CStr::from_ptr(info.driver.as_ptr()) }.to_string_lossy().to_lowercase();
                      for d in &cli.driver {
-                         if drv_str.contains(d) {
+                         if drv_str.to_lowercase().contains(&d.to_lowercase()) {
                              matched = true;
                              break;
                          }
@@ -94,23 +95,18 @@ fn main() -> Result<()> {
             }
 
             let link_detected = iif.ethtool_link().unwrap_or(false);
-            #[cfg(not(target_os = "linux"))]
-            {
-                if !link_detected {
-                    // On macOS, use running flag as proxy for link
-                    link_detected = iif.is_running();
-                }
-            }
 
             if link_detected {
                 print!("{} ", name.bold().bright_blue());
+                print!("{}", "[link-up]".bright_black());
             } else {
                 print!("{} ", name.blue());
+                print!("{}", "[link-down]".bright_black());
             }
 
             // --- Header (Name + Namespace + Link Status) ---
             if let Some(netns) = &nic.netns {
-                print!(" {}", netns.bright_black());
+                print!("  {}", netns.dimmed());
             }
 
             println!(); // End of header line
@@ -136,22 +132,34 @@ fn main() -> Result<()> {
                  }
             }
 
+            // --- Status / Flags ---
+            let flags_str = iif.flags_str();
+            if !flags_str.is_empty() {
+                 println!("{}Flags:   {}", indent, flags_str.dimmed());
+            }
+
             // --- Driver / Bus Info ---
-            let mut bus_str_owned = String::new();
-            if let Some(info) = &drv_info {
+            #[allow(unused_variables)]
+            let bus_str_owned = if let Some(info) = &drv_info {
                  let drv_str = unsafe { std::ffi::CStr::from_ptr(info.driver.as_ptr()) }.to_string_lossy();
                  let ver_str = unsafe { std::ffi::CStr::from_ptr(info.version.as_ptr()) }.to_string_lossy();
                  let bus_str = unsafe { std::ffi::CStr::from_ptr(info.bus_info.as_ptr()) }.to_string_lossy();
-                 bus_str_owned = bus_str.to_string();
+                 let s = bus_str.to_string();
 
                  println!("{}Driver:  {} (v: {})", indent, drv_str.blue().bold(), ver_str);
-                 if !bus_str_owned.is_empty() {
-                      println!("{}Bus:     {}", indent, bus_str_owned);
+                 if !s.is_empty() {
+                      println!("{}Bus:     {}", indent, s);
                  }
-            }
+                 s
+            } else {
+                 String::new()
+            };
 
             // --- PCI Info (namespace agnostic) ---
+            #[cfg(not(target_os = "macos"))]
             let pci_info_opt = pci_utils::find_pci_info_for_interface(name, &bus_str_owned, &pci_devices);
+            #[cfg(target_os = "macos")]
+            let pci_info_opt = macos::get_pci_info_from_ioreg(name);
 
             if let Some(pci_info) = pci_info_opt {
                 if let Some(addr) = pci_info.pci_address() {
@@ -169,19 +177,23 @@ fn main() -> Result<()> {
                 }
             }
 
-            // --- Status / Flags ---
-            let flags_str = iif.flags_str();
-            if !flags_str.is_empty() {
-                 println!("{}Flags:   {}", indent, flags_str.dimmed());
-            }
 
             // --- MTU / Metric ---
             let mtu = iif.mtu().unwrap_or(0);
             let metric = iif.metric().unwrap_or(0);
             println!("{}MTU:     {} (Metric: {})", indent, mtu, metric);
 
-            // --- Stats (Linux only currently) ---
-            if let Ok(stats) = proc::get_stats(name) {
+            // --- Media ---
+            if let Ok(media) = iif.media() {
+                if media != "unknown" {
+                    println!("{}Media:   {}", indent, media.dimmed());
+                }
+            }
+
+            // --- Stats ---
+            let stats_opt = proc::get_stats(name).ok();
+
+            if let Some(stats) = stats_opt {
                  if stats.rx_bytes > 0 || stats.tx_bytes > 0 {
                       println!("{}Stats:   RX: {} bytes ({} pkts), TX: {} bytes ({} pkts)",
                           indent,

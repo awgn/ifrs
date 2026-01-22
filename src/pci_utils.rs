@@ -1,6 +1,9 @@
+#[cfg(not(target_os = "macos"))]
 use anyhow::Result;
+#[cfg(not(target_os = "macos"))]
 use std::collections::HashMap;
 
+#[cfg(not(target_os = "macos"))]
 fn get_vendor_name(vendor_id: u16) -> Option<&'static str> {
     match vendor_id {
         0x8086 => Some("Intel Corporation"),
@@ -27,6 +30,7 @@ fn get_vendor_name(vendor_id: u16) -> Option<&'static str> {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 fn get_common_device_name(vendor_id: u16, device_id: u16) -> Option<&'static str> {
     match (vendor_id, device_id) {
         (0x8086, 0x100e) => Some("82540EM Gigabit Ethernet Controller"),
@@ -61,11 +65,14 @@ pub struct PciDeviceInfo {
     pub device: Option<u8>,
     pub function: Option<u8>,
     pub driver: Option<String>,
+    #[allow(dead_code)]
     pub numa_node: Option<i32>,
+    #[allow(dead_code)]
     pub irq: Option<u32>,
 }
 
 impl PciDeviceInfo {
+    #[allow(dead_code)]
     pub fn format_class(&self) -> String {
         if let (Some(class), Some(subclass)) = (self.class, self.subclass) {
             match (class, subclass) {
@@ -90,7 +97,7 @@ impl PciDeviceInfo {
     }
 }
 
-#[cfg(feature = "pci-info")]
+#[cfg(all(feature = "pci-info", not(target_os = "macos")))]
 pub fn get_pci_devices() -> Result<HashMap<String, PciDeviceInfo>> {
     use pci_info::PciInfo;
     
@@ -160,11 +167,12 @@ pub fn get_pci_devices() -> Result<HashMap<String, PciDeviceInfo>> {
     Ok(devices)
 }
 
-#[cfg(not(feature = "pci-info"))]
+#[cfg(all(not(feature = "pci-info"), not(target_os = "macos")))]
 pub fn get_pci_devices() -> Result<HashMap<String, PciDeviceInfo>> {
     Ok(HashMap::new())
 }
 
+#[cfg(not(target_os = "macos"))]
 pub fn find_pci_info_for_interface(
     interface_name: &str,
     bus_info: &str,
@@ -187,6 +195,7 @@ pub fn find_pci_info_for_interface(
     pci_devices.get(&pci_addr).cloned()
 }
 
+#[cfg(not(target_os = "macos"))]
 fn parse_pci_address(bus_info: &str) -> Option<String> {
     let parts: Vec<&str> = bus_info.split(':').collect();
     
@@ -239,7 +248,7 @@ fn extract_pci_from_sysfs(interface_name: &str) -> Option<String> {
     None
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(all(not(target_os = "linux"), not(target_os = "macos")))]
 fn extract_pci_from_sysfs(_interface_name: &str) -> Option<String> {
     None
 }
