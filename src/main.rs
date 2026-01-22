@@ -106,7 +106,7 @@ fn main() -> Result<()> {
 
             // --- Header (Name + Namespace + Link Status) ---
             if let Some(netns) = &nic.netns {
-                print!("  {}", netns.dimmed());
+                print!(" {{{}}}", netns.bright_white());
             }
 
             println!(); // End of header line
