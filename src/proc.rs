@@ -1,5 +1,6 @@
 use anyhow::Result;
 use std::collections::HashSet;
+use smol_str::SmolStr;
 
 #[cfg(target_os = "macos")]
 use crate::macos;
@@ -7,8 +8,8 @@ use crate::macos;
 // This struct will hold the interface name and its network namespace, if any.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LinuxNic {
-    pub name: String,
-    pub netns: Option<String>,
+    pub name: SmolStr,
+    pub netns: Option<SmolStr>,
 }
 
 
@@ -16,7 +17,7 @@ pub struct LinuxNic {
 pub fn get_if_list() -> Result<Vec<LinuxNic>> {
     use nix::sched::{setns, CloneFlags};
     use std::fs;
-    
+
     use std::os::unix::fs::MetadataExt; // for ino()
     use std::path::Path;
 
@@ -34,7 +35,7 @@ pub fn get_if_list() -> Result<Vec<LinuxNic>> {
     if !is_root_netns() || !nix::unistd::geteuid().is_root() {
         for ifa in nix::ifaddrs::getifaddrs()? {
             let nic = LinuxNic {
-                name: ifa.interface_name,
+                name: SmolStr::from(ifa.interface_name),
                 netns: None, // No specific namespace context from this perspective
             };
             if seen_nics.insert(nic.clone()) {
@@ -46,10 +47,10 @@ pub fn get_if_list() -> Result<Vec<LinuxNic>> {
     }
 
     // We are in the root netns and we are root. Let's scan all namespaces.
-    
+
     // 1. Get interfaces from the root namespace
     for ifa in nix::ifaddrs::getifaddrs()? {
-        let nic = LinuxNic { name: ifa.interface_name, netns: None };
+        let nic = LinuxNic { name: SmolStr::from(ifa.interface_name), netns: None };
         if seen_nics.insert(nic.clone()) {
             nics.push(nic);
         }
@@ -60,13 +61,17 @@ pub fn get_if_list() -> Result<Vec<LinuxNic>> {
     if ns_dir.exists() {
         let original_ns = fs::File::open("/proc/self/ns/net")?;
         for entry in fs::read_dir(ns_dir)?.flatten() {
-            let ns_name = entry.file_name().to_string_lossy().to_string();
+            let ns_name_os = entry.file_name();
+            let ns_name = ns_name_os.to_string_lossy();
             if let Ok(ns_file) = fs::File::open(entry.path()) {
                 // Switch, get interfaces, switch back
                 if setns(ns_file, CloneFlags::CLONE_NEWNET).is_ok() {
                     if let Ok(ifaddrs) = nix::ifaddrs::getifaddrs() {
                         for ifa in ifaddrs {
-                            let nic = LinuxNic { name: ifa.interface_name, netns: Some(ns_name.clone()) };
+                            let nic = LinuxNic {
+                                name: SmolStr::from(ifa.interface_name),
+                                netns: Some(SmolStr::from(ns_name.as_ref()))
+                            };
                              if seen_nics.insert(nic.clone()) {
                                 nics.push(nic);
                             }
@@ -91,9 +96,9 @@ pub fn get_if_list() -> Result<Vec<LinuxNic>> {
     for ifa in addrs {
         names.insert(ifa.interface_name);
     }
-    let mut ret: Vec<String> = names.into_iter().collect();
+    let mut ret: Vec<SmolStr> = names.into_iter().collect();
     ret.sort();
-    Ok(ret.into_iter().map(|name| LinuxNic { name, netns: None }).collect())
+    Ok(ret.into_iter().map(|name| LinuxNic { name: SmolStr::from(name), netns: None }).collect())
 }
 
 
@@ -101,7 +106,7 @@ pub fn get_if_list() -> Result<Vec<LinuxNic>> {
 pub struct Stats {
     pub rx_bytes: u64,
     pub rx_packets: u64,
-    
+
     pub tx_bytes: u64,
     pub tx_packets: u64,
 }
@@ -128,9 +133,9 @@ pub fn get_stats(ifname: &str) -> Result<Stats> {
         let name = parts[0].trim_end_matches(':');
         if name == ifname {
             if parts.len() < 11 { break; } // Safety
-            
+
             let p = |idx: usize| parts[idx].parse::<u64>().unwrap_or(0);
-            
+
             return Ok(Stats {
                 rx_bytes: p(1),
                 rx_packets: p(2),
@@ -152,7 +157,7 @@ pub fn get_stats(_ifname: &str) -> Result<Stats> {
     Ok(Stats::default())
 }
 
-pub fn get_inet6_addr(ifname: &str) -> Result<Vec<(String, u32, String)>> {
+pub fn get_inet6_addr(ifname: &str) -> Result<Vec<(SmolStr, u32, SmolStr)>> {
     let addrs = nix::ifaddrs::getifaddrs()?;
     let mut ret = Vec::new();
     for ifa in addrs {
@@ -171,15 +176,15 @@ pub fn get_inet6_addr(ifname: &str) -> Result<Vec<(String, u32, String)>> {
                             "host"
                         } else if ip.is_unicast_link_local() {
                             "link"
-                        } else if ip.octets()[0] == 0xfe && (ip.octets()[1] & 0xc0) == 0xc0 { 
-                            "site" 
+                        } else if ip.octets()[0] == 0xfe && (ip.octets()[1] & 0xc0) == 0xc0 {
+                            "site"
                         } else if ip.is_multicast() {
                             "multicast"
                         } else {
                             "global"
                         };
-                        
-                        ret.push((ip.to_string(), prefix, scope.to_string()));
+
+                        ret.push((SmolStr::from(ip.to_string()), prefix, SmolStr::from(scope)));
                     }
                 }
             }

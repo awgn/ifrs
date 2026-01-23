@@ -27,7 +27,7 @@ pub static SYSTEM_PROFILER_DATA: Lazy<Option<HashMap<String, NetworkInterface>>>
         .arg("-json")
         .output()
         .ok()?;
-    
+
     if !output.status.success() {
         return None;
     }
@@ -45,11 +45,11 @@ pub static SYSTEM_PROFILER_DATA: Lazy<Option<HashMap<String, NetworkInterface>>>
 pub fn get_driver_info(if_name: &str) -> Option<(String, String, String)> {
     let data = SYSTEM_PROFILER_DATA.as_ref()?;
     let iface = data.get(if_name)?;
-    
+
     let driver = iface.hardware.clone().or(iface.type_.clone()).unwrap_or_else(|| "Unknown".to_string());
     // System profiler doesn't give driver version easily.
-    let version = "N/A".to_string(); 
-    
+    let version = "N/A".to_string();
+
     // Try to get PCI address from ioreg
     let bus = get_pci_address_from_ioreg(if_name).unwrap_or_else(|| "N/A".to_string());
 
@@ -65,13 +65,13 @@ fn get_pci_address_from_ioreg(if_name: &str) -> Option<String> {
         .arg(if_name)
         .output()
         .ok()?;
-    
+
     if !output.status.success() {
         return None;
     }
-    
+
     let content = String::from_utf8_lossy(&output.stdout);
-    
+
     // Look for IOPCIDevice parent or location
     for line in content.lines() {
         if line.contains("pcidebug") || line.contains("IOPCIDevice") {
@@ -82,7 +82,7 @@ fn get_pci_address_from_ioreg(if_name: &str) -> Option<String> {
                 }
             }
         }
-        
+
         // Alternative: look for "location" property
         if line.contains("\"location\"") {
             if let Some(eq_pos) = line.find('=') {
@@ -95,7 +95,7 @@ fn get_pci_address_from_ioreg(if_name: &str) -> Option<String> {
             }
         }
     }
-    
+
     None
 }
 
@@ -108,18 +108,18 @@ pub fn get_pci_info_from_ioreg(if_name: &str) -> Option<PciDeviceInfo> {
         .arg(if_name)
         .output()
         .ok()?;
-    
+
     if !output.status.success() {
         return None;
     }
-    
+
     let content = String::from_utf8_lossy(&output.stdout);
     let mut pci_info = PciDeviceInfo::default();
     let mut found_any = false;
-    
+
     for line in content.lines() {
         let trimmed = line.trim();
-        
+
         // Vendor ID
         if trimmed.contains("\"vendor-id\"") {
             if let Some(value) = extract_hex_value(trimmed) {
@@ -127,7 +127,7 @@ pub fn get_pci_info_from_ioreg(if_name: &str) -> Option<PciDeviceInfo> {
                 found_any = true;
             }
         }
-        
+
         // Device ID
         if trimmed.contains("\"device-id\"") {
             if let Some(value) = extract_hex_value(trimmed) {
@@ -135,7 +135,7 @@ pub fn get_pci_info_from_ioreg(if_name: &str) -> Option<PciDeviceInfo> {
                 found_any = true;
             }
         }
-        
+
         // Subsystem Vendor ID
         if trimmed.contains("\"subsystem-vendor-id\"") {
             if let Some(value) = extract_hex_value(trimmed) {
@@ -143,7 +143,7 @@ pub fn get_pci_info_from_ioreg(if_name: &str) -> Option<PciDeviceInfo> {
                 found_any = true;
             }
         }
-        
+
         // Subsystem ID
         if trimmed.contains("\"subsystem-id\"") {
             if let Some(value) = extract_hex_value(trimmed) {
@@ -151,7 +151,7 @@ pub fn get_pci_info_from_ioreg(if_name: &str) -> Option<PciDeviceInfo> {
                 found_any = true;
             }
         }
-        
+
         // Revision
         if trimmed.contains("\"revision-id\"") {
             if let Some(value) = extract_hex_value(trimmed) {
@@ -159,7 +159,7 @@ pub fn get_pci_info_from_ioreg(if_name: &str) -> Option<PciDeviceInfo> {
                 found_any = true;
             }
         }
-        
+
         // Class code
         if trimmed.contains("\"class-code\"") {
             if let Some(value) = extract_hex_value(trimmed) {
@@ -168,7 +168,7 @@ pub fn get_pci_info_from_ioreg(if_name: &str) -> Option<PciDeviceInfo> {
                 found_any = true;
             }
         }
-        
+
         // IOName (driver)
         if trimmed.contains("\"IOName\"") {
             if let Some(name) = extract_string_value(trimmed) {
@@ -177,7 +177,7 @@ pub fn get_pci_info_from_ioreg(if_name: &str) -> Option<PciDeviceInfo> {
             }
         }
     }
-    
+
     if found_any {
         Some(pci_info)
     } else {
@@ -224,7 +224,7 @@ pub fn get_stats(if_name: &str) -> Option<Stats> {
     while !current.is_null() {
         let name_ptr = unsafe { (*current).ifa_name };
         let name = unsafe { std::ffi::CStr::from_ptr(name_ptr) }.to_string_lossy();
-        
+
         if name == if_name {
             let addr = unsafe { (*current).ifa_addr };
             if !addr.is_null() && unsafe { (*addr).sa_family } == libc::AF_LINK as u8 {

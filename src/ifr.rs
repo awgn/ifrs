@@ -1,4 +1,5 @@
 use std::io;
+use smol_str::SmolStr;
 use std::mem;
 use std::os::fd::{AsRawFd, OwnedFd};
 use nix::sys::socket::{socket, AddressFamily, SockFlag, SockType};
@@ -173,7 +174,7 @@ nix::ioctl_read_bad!(ioctl_get_media, SIOCGIFMEDIA, IfMediaReq);
 
 
 pub struct Interface {
-    name: String,
+    name: SmolStr,
     sock: OwnedFd,
 }
 
@@ -182,9 +183,9 @@ impl Interface {
         // Create a dummy socket for ioctls
         let sock = socket(AddressFamily::Inet, SockType::Datagram, SockFlag::empty(), None)
             .map_err(io::Error::other)?;
-            
+
         Ok(Self {
-            name: name.to_string(),
+            name: SmolStr::from(name),
             sock,
         })
     }
@@ -209,14 +210,14 @@ impl Interface {
         self.flags().map(|f| f & 0x40 != 0).unwrap_or(false)
     }
 
-    pub fn flags_str(&self) -> String {
+    pub fn flags_str(&self) -> SmolStr {
         let flags = match self.flags() {
             Ok(f) => f as u16,
-            Err(_) => return String::new(),
+            Err(_) => return SmolStr::default(),
         };
 
         let mut ret = Vec::new();
-        
+
         #[cfg(target_os = "macos")]
         {
             // macOS / BSD flags
@@ -259,7 +260,7 @@ impl Interface {
             if flags & 0x8000 != 0 { ret.push("DYNAMIC"); }
         }
 
-        ret.join(" ")
+        SmolStr::from(ret.join(" "))
     }
 
     pub fn ethtool_drvinfo(&self) -> io::Result<EthtoolDrvInfo> {
@@ -267,14 +268,14 @@ impl Interface {
         {
             let mut info: EthtoolDrvInfo = Default::default();
             info.cmd = ETHTOOL_GDRVINFO;
-            
+
             let mut req = IfReq::new(&self.name);
             req.ifr_ifru.ifru_data = &mut info as *mut _ as *mut c_void;
 
             unsafe { ioctl_ethtool(self.sock.as_raw_fd(), &mut req) }.map_err(|e| io::Error::from_raw_os_error(e as i32))?;
             Ok(info)
         }
-        
+
         #[cfg(target_os = "macos")]
         {
             if let Some((driver, version, bus)) = macos::get_driver_info(&self.name) {
@@ -290,11 +291,11 @@ impl Interface {
                     let last_idx = std::cmp::min(bytes.len(), dest.len() - 1);
                     dest[last_idx] = 0;
                 };
-                
+
                 copy_str(&mut info.driver, &driver);
                 copy_str(&mut info.version, &version);
                 copy_str(&mut info.bus_info, &bus);
-                
+
                 Ok(info)
             } else {
                 Err(io::Error::new(io::ErrorKind::NotFound, "Driver info not found"))
@@ -307,12 +308,12 @@ impl Interface {
         }
     }
 
-    pub fn media(&self) -> io::Result<String> {
+    pub fn media(&self) -> io::Result<SmolStr> {
         #[cfg(target_os = "linux")]
         {
             let mut cmd: EthtoolCmd = Default::default();
             cmd.cmd = ETHTOOL_GSET;
-            
+
             let mut req = IfReq::new(&self.name);
             req.ifr_ifru.ifru_data = &mut cmd as *mut _ as *mut libc::c_void;
 
@@ -328,11 +329,11 @@ impl Interface {
                     _ => "unknown",
                 };
                 if speed == 0 || speed == 0xFFFF || speed == 0xFFFFFFFF {
-                    return Ok(format!("{} (unknown speed)", port));
+                    return Ok(format!("{} (unknown speed)", port).into());
                 }
-                return Ok(format!("{} {}Mb/s {}", port, speed, duplex));
+                return Ok(format!("{} {}Mb/s {}", port, speed, duplex).into());
             }
-            Ok("unknown".to_string())
+            Ok(SmolStr::new_static("unknown"))
         }
 
         #[cfg(target_os = "macos")]
@@ -343,11 +344,11 @@ impl Interface {
             for (i, &byte) in bytes.iter().enumerate().take(len) {
                 req.ifm_name[i] = byte as libc::c_char;
             }
-            
+
             // On macOS, SIOCGIFMEDIA often requires a larger buffer or specific socket.
             // We use a dummy list to ensure the structure is fully populated if needed.
             let mut res = unsafe { ioctl_get_media(self.sock.as_raw_fd(), &mut req) };
-            
+
             if res.is_err() {
                 // Try with different socket families as some drivers (like Wi-Fi) are picky
                 for family in [libc::AF_INET6, libc::AF_LINK] {
@@ -364,13 +365,13 @@ impl Interface {
                 let active = req.ifm_active;
                 let type_ = (active & 0x000000f0) >> 4;
                 let subtype = active & 0x0000000f;
-                
+
                 let type_str = match type_ {
                     2 => "Ethernet",
                     8 => "Wi-Fi",
                     _ => "Other",
                 };
-                
+
                 let subtype_str = if type_ == 2 {
                     match subtype {
                         0 => "autoselect",
@@ -394,11 +395,11 @@ impl Interface {
                 } else {
                     "unknown"
                 };
-                
+
                 let mut options = Vec::new();
                 if active & 0x00010000 != 0 { options.push("full-duplex"); }
                 if active & 0x00020000 != 0 { options.push("half-duplex"); }
-                
+
                 if options.is_empty() {
                     return Ok(format!("{} {}", type_str, subtype_str));
                 } else {
@@ -458,7 +459,7 @@ impl Interface {
             for (i, &byte) in bytes.iter().enumerate().take(len) {
                 req.ifm_name[i] = byte as c_char;
             }
-            
+
             match unsafe { ioctl_get_media(self.sock.as_raw_fd(), &mut req) } {
                 Ok(_) => {
                     // IFM_AVALID = 0x00000001, IFM_ACTIVE = 0x00000002
@@ -478,32 +479,36 @@ impl Interface {
     }
 
     #[cfg(target_os = "linux")]
-    pub fn mac(&self) -> io::Result<String> {
+    pub fn mac(&self) -> io::Result<SmolStr> {
+        use smol_str::format_smolstr;
+
         let mut req = IfReq::new(&self.name);
         unsafe { ioctl_get_hwaddr(self.sock.as_raw_fd(), &mut req) }.map_err(|e| io::Error::from_raw_os_error(e as i32))?;
         let addr = unsafe { req.ifr_ifru.ifru_hwaddr.sa_data };
         // sa_data is [i8; 14]. MAC is first 6.
-        Ok(format!("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-            addr[0] as u8, addr[1] as u8, addr[2] as u8, 
+        Ok(format_smolstr!("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+            addr[0] as u8, addr[1] as u8, addr[2] as u8,
             addr[3] as u8, addr[4] as u8, addr[5] as u8))
     }
 
     #[cfg(not(target_os = "linux"))]
-    pub fn mac(&self) -> io::Result<String> {
+    pub fn mac(&self) -> io::Result<SmolStr> {
         let addrs = nix::ifaddrs::getifaddrs()?;
         for ifa in addrs {
             if ifa.interface_name == self.name {
                 if let Some(address) = ifa.address {
                     if let Some(link) = address.as_link_addr() {
                          if let Some(addr) = link.addr() {
-                             let s = addr.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(":");
+                            use smol_str::format_smolstr;
+
+                             let s = addr.iter().map(|b| format_smolstr!("{:02x}", b)).collect::<Vec<_>>().join(":");
                              return Ok(s);
                          }
                     }
                 }
             }
         }
-        Ok("".to_string())
+        Ok(SmolStr::from(""))
     }
 
     pub fn mtu(&self) -> io::Result<i32> {
@@ -511,7 +516,7 @@ impl Interface {
         unsafe { ioctl_get_mtu(self.sock.as_raw_fd(), &mut req) }.map_err(|e| io::Error::from_raw_os_error(e as i32))?;
         unsafe { Ok(req.ifr_ifru.ifru_mtu) }
     }
-    
+
     pub fn metric(&self) -> io::Result<i32> {
         let mut req = IfReq::new(&self.name);
         match unsafe { ioctl_get_metric(self.sock.as_raw_fd(), &mut req) } {
@@ -519,9 +524,9 @@ impl Interface {
             Err(e) => Err(io::Error::from_raw_os_error(e as i32)),
         }
     }
-    
+
     // Inet addrs (using nix::ifaddrs is easier here, as C++ uses getifaddrs)
-    pub fn inet_addrs(&self) -> Vec<(String, String, i32)> {
+    pub fn inet_addrs(&self) -> Vec<(SmolStr, SmolStr, i32)> {
         let mut ret = Vec::new();
         if let Ok(addrs) = nix::ifaddrs::getifaddrs() {
             for ifa in addrs {
@@ -530,17 +535,17 @@ impl Interface {
                          if let Some(sockaddr) = address.as_sockaddr_in() {
                              let ip_u32 = sockaddr.ip();
                              let ip = std::net::Ipv4Addr::from(ip_u32);
-                             
+
                              let mask_opt = ifa.netmask.as_ref().and_then(|a| a.as_sockaddr_in().map(|s| s.ip()));
-                             
+
                              if let Some(mask_u32) = mask_opt {
                                  let mask_ip = std::net::Ipv4Addr::from(mask_u32);
                                  // Mask is u32.
                                  let prefix = u32::from(mask_ip).count_ones() as i32;
-                                 
-                                 ret.push((ip.to_string(), mask_ip.to_string(), prefix));
+
+                                 ret.push((SmolStr::from(ip.to_string()), SmolStr::from(mask_ip.to_string()), prefix));
                              } else {
-                                 ret.push((ip.to_string(), "".to_string(), 0));
+                                 ret.push((SmolStr::from(ip.to_string()), SmolStr::new_static(""), 0));
                              }
                          }
                     }

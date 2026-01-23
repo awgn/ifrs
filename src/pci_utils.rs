@@ -1,5 +1,7 @@
 #[cfg(not(target_os = "macos"))]
 use anyhow::Result;
+#[cfg(all(feature = "pci-info", not(target_os = "macos")))]
+use smol_str::SmolStr;
 #[cfg(not(target_os = "macos"))]
 use std::collections::HashMap;
 
@@ -124,12 +126,12 @@ impl PciDeviceInfo {
 }
 
 #[cfg(all(feature = "pci-info", not(target_os = "macos")))]
-pub fn get_pci_devices() -> Result<HashMap<String, PciDeviceInfo>> {
+pub fn get_pci_devices() -> Result<HashMap<SmolStr, PciDeviceInfo>> {
     use pci_info::PciInfo;
-    
+
     let mut devices = HashMap::new();
     let db = PciDb::new();
-    
+
     match PciInfo::enumerate_pci() {
         Ok(pci_devices) => {
             for dev_result in pci_devices {
@@ -137,7 +139,7 @@ pub fn get_pci_devices() -> Result<HashMap<String, PciDeviceInfo>> {
                     Ok(d) => d,
                     Err(_) => continue,
                 };
-                
+
                 let class = match dev.device_class() {
                     Ok(c) => u8::from(c),
                     Err(_) => continue,
@@ -146,7 +148,7 @@ pub fn get_pci_devices() -> Result<HashMap<String, PciDeviceInfo>> {
                     Ok(sc) => u8::from(sc),
                     Err(_) => continue,
                 };
-                
+
                 if class != 0x02 && class != 0x0d {
                     continue;
                 }
@@ -176,7 +178,9 @@ pub fn get_pci_devices() -> Result<HashMap<String, PciDeviceInfo>> {
                 info.subsystem_device = dev.subsystem_device_id().ok().flatten();
 
                 if let (Some(b), Some(d), Some(f)) = (bus, device, function) {
-                    let key = format!("{:02x}:{:02x}.{}", b, d, f);
+                    use smol_str::format_smolstr;
+
+                    let key = format_smolstr!("{:02x}:{:02x}.{}", b, d, f);
                     devices.insert(key, info);
                 }
             }
@@ -185,7 +189,7 @@ pub fn get_pci_devices() -> Result<HashMap<String, PciDeviceInfo>> {
             eprintln!("Warning: Could not enumerate PCI devices: {}", e);
         }
     }
-    
+
     Ok(devices)
 }
 
@@ -198,14 +202,14 @@ pub fn get_pci_devices() -> Result<HashMap<String, PciDeviceInfo>> {
 pub fn find_pci_info_for_interface(
     interface_name: &str,
     bus_info: &str,
-    pci_devices: &HashMap<String, PciDeviceInfo>,
+    pci_devices: &HashMap<SmolStr, PciDeviceInfo>,
 ) -> Option<PciDeviceInfo> {
     if bus_info.is_empty() {
         return None;
     }
 
     let clean_bus = bus_info.trim_start_matches("pci@");
-    
+
     let pci_addr = if let Some(addr) = parse_pci_address(clean_bus) {
         addr
     } else if let Some(addr) = extract_pci_from_sysfs(interface_name) {
@@ -218,37 +222,39 @@ pub fn find_pci_info_for_interface(
 }
 
 #[cfg(not(target_os = "macos"))]
-fn parse_pci_address(bus_info: &str) -> Option<String> {
+fn parse_pci_address(bus_info: &str) -> Option<SmolStr> {
     let parts: Vec<&str> = bus_info.split(':').collect();
-    
+
     if parts.len() >= 2 {
         let last_part = parts[parts.len() - 1];
         let second_last = parts[parts.len() - 2];
-        
+
         if last_part.contains('.') {
             let dev_func: Vec<&str> = last_part.split('.').collect();
             if dev_func.len() == 2 {
                 if let Ok(bus) = u8::from_str_radix(second_last, 16) {
                     if let Ok(dev) = u8::from_str_radix(dev_func[0], 16) {
                         if let Ok(func) = u8::from_str_radix(dev_func[1], 16) {
-                            return Some(format!("{:02x}:{:02x}.{}", bus, dev, func));
+                            use smol_str::format_smolstr;
+
+                            return Some(format_smolstr!("{:02x}:{:02x}.{}", bus, dev, func));
                         }
                     }
                 }
             }
         }
     }
-    
+
     None
 }
 
 #[cfg(target_os = "linux")]
-fn extract_pci_from_sysfs(interface_name: &str) -> Option<String> {
+fn extract_pci_from_sysfs(interface_name: &str) -> Option<SmolStr> {
     use std::fs;
     use std::path::PathBuf;
-    
+
     let sysfs_path = PathBuf::from(format!("/sys/class/net/{}/device/uevent", interface_name));
-    
+
     if let Ok(content) = fs::read_to_string(&sysfs_path) {
         for line in content.lines() {
             if line.starts_with("PCI_SLOT_NAME=") {
@@ -257,7 +263,7 @@ fn extract_pci_from_sysfs(interface_name: &str) -> Option<String> {
             }
         }
     }
-    
+
     let device_link = PathBuf::from(format!("/sys/class/net/{}/device", interface_name));
     if let Ok(target) = fs::read_link(&device_link) {
         if let Some(filename) = target.file_name() {
@@ -266,7 +272,7 @@ fn extract_pci_from_sysfs(interface_name: &str) -> Option<String> {
             }
         }
     }
-    
+
     None
 }
 
