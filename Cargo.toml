@@ -12,6 +12,7 @@ categories = ["command-line-utilities", "network-programming"]
 
 [dependencies]
 smol_str = "0.2"
+rayon = "1.8"
 clap = { version = "4.4", features = ["derive"] }
 owo-colors = "4.0.0"
 anyhow = "1.0"

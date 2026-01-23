@@ -167,6 +167,8 @@ impl CollectedInterface {
         #[cfg(not(target_os = "macos"))]
         let pci_info = pci_utils::find_pci_info_for_interface(name, bus_str_owned, pci_devices);
         #[cfg(target_os = "macos")]
+        let _ = bus_str_owned;
+        #[cfg(target_os = "macos")]
         let pci_info = macos::get_pci_info_from_ioreg(name);
 
         let mtu = iif.mtu().unwrap_or(0);

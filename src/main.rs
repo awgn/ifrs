@@ -6,6 +6,7 @@ use smol_str::SmolStr;
 use std::fs;
 #[cfg(target_os = "linux")]
 use nix::sched::{setns, CloneFlags};
+use rayon::prelude::*;
 
 mod ifr;
 mod proc;
@@ -73,7 +74,7 @@ fn main() -> Result<()> {
     #[cfg(target_os = "linux")]
     let original_ns = fs::File::open("/proc/self/ns/net").ok();
 
-    for nic in &all_interfaces {
+    let results: Vec<_> = all_interfaces.par_iter().map(|nic| {
         // --- Namespace Switching (Linux specific) ---
         #[cfg(target_os = "linux")]
         let mut switched_ns = false;
@@ -86,26 +87,33 @@ fn main() -> Result<()> {
             }
         }
 
-        let result: Result<()> = (|| {
+        let result: Result<CollectedInterface> = (|| {
             #[cfg(not(target_os = "macos"))]
             let info = CollectedInterface::gather(nic, &pci_devices)?;
             #[cfg(target_os = "macos")]
             let info = CollectedInterface::gather(nic)?;
-
-            if matcher.matches(&info) {
-                info.print(cli.verbose);
-            }
-            Ok(())
+            Ok(info)
         })();
-
-        if let Err(e) = result {
-             eprintln!("Error processing interface {}: {}", nic.name, e.red());
-        }
 
         #[cfg(target_os = "linux")]
         if switched_ns {
             if let Some(ref orig_ns) = original_ns {
                 let _ = setns(orig_ns, CloneFlags::CLONE_NEWNET);
+            }
+        }
+
+        (nic, result)
+    }).collect();
+
+    for (nic, result) in results {
+        match result {
+            Ok(info) => {
+                if matcher.matches(&info) {
+                    info.print(cli.verbose);
+                }
+            }
+            Err(e) => {
+                eprintln!("Error processing interface {}: {}", nic.name, e.red());
             }
         }
     }
