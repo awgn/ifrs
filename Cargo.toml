@@ -2,6 +2,13 @@
 name = "ifrs"
 version = "0.1.0"
 edition = "2021"
+authors = ["Nicola Bonelli <nicola.bonelli@larthia.com>"]
+description = "A network interface information tool"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/awgn/ifrs"
+readme = "README.md"
+keywords = ["network", "interface", "linux", "macos", "cli"]
+categories = ["command-line-utilities", "network-programming"]
 
 [dependencies]
 smol_str = "0.2"

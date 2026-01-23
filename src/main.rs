@@ -17,15 +17,16 @@ mod macos;
 use filter::{Matcher, CollectedInterface};
 
 #[derive(Parser)]
-#[command(name = "ifshow", about = "Show network interface information")]
+#[command(
+    name = "ifrs",
+    about = "Show network interface information",
+    version,
+    author
+)]
 struct Cli {
     /// Display all interfaces (even if down)
     #[arg(short, long)]
     all: bool,
-
-    /// Filter by driver
-    #[arg(short, long)]
-    driver: Vec<SmolStr>,
 
     /// Verbose output
     #[arg(short, long)]
@@ -61,7 +62,6 @@ fn main() -> Result<()> {
         ipv6: cli.ipv6,
         running: cli.running,
         ignore_case: cli.ignore_case,
-        drivers: cli.driver.into_iter().map(SmolStr::from).collect(),
         all: cli.all,
     };
 

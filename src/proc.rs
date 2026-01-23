@@ -96,7 +96,7 @@ pub fn get_if_list() -> Result<Vec<LinuxNic>> {
     for ifa in addrs {
         names.insert(ifa.interface_name);
     }
-    let mut ret: Vec<SmolStr> = names.into_iter().collect();
+    let mut ret: Vec<SmolStr> = names.into_iter().map(SmolStr::from).collect();
     ret.sort();
     Ok(ret.into_iter().map(|name| LinuxNic { name: SmolStr::from(name), netns: None }).collect())
 }

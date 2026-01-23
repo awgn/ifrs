@@ -401,16 +401,20 @@ impl Interface {
                 if active & 0x00020000 != 0 { options.push("half-duplex"); }
 
                 if options.is_empty() {
-                    return Ok(format!("{} {}", type_str, subtype_str));
+                    use smol_str::format_smolstr;
+
+                    return Ok(format_smolstr!("{} {}", type_str, subtype_str));
                 } else {
-                    return Ok(format!("{} {} <{}>", type_str, subtype_str, options.join(",")));
+                    use smol_str::format_smolstr;
+
+                    return Ok(format_smolstr!("{} {} <{}>", type_str, subtype_str, options.join(",")));
                 }
             }
 
             // Fallback for macOS: use networksetup if ioctl fails or returns generic info
             let output = std::process::Command::new("networksetup")
                 .arg("-getmedia")
-                .arg(&self.name)
+                .arg(&*self.name)
                 .output();
 
             if let Ok(out) = output {
@@ -419,13 +423,13 @@ impl Interface {
                     if line.starts_with("Current:") {
                         let val = line.trim_start_matches("Current:").trim();
                         if val != "autoselect" && !val.is_empty() {
-                            return Ok(val.to_string());
+                            return Ok(val.into());
                         }
                     }
                 }
             }
 
-            Ok("unknown".to_string())
+            Ok(SmolStr::new_static("unknown"))
         }
 
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -502,7 +506,7 @@ impl Interface {
                             use smol_str::format_smolstr;
 
                              let s = addr.iter().map(|b| format_smolstr!("{:02x}", b)).collect::<Vec<_>>().join(":");
-                             return Ok(s);
+                             return Ok(s.into());
                          }
                     }
                 }

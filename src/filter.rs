@@ -13,7 +13,6 @@ pub struct Matcher {
     pub ipv6: bool,
     pub running: bool,
     pub ignore_case: bool,
-    pub drivers: Vec<SmolStr>,
     pub all: bool,
 }
 
@@ -45,22 +44,7 @@ impl Matcher {
              return false;
         }
 
-        // 5. Driver filter
-        if !self.drivers.is_empty() {
-             let mut matched = false;
-             if let Some((drv, _, _)) = &info.driver_info {
-                 let drv_str = drv.to_lowercase();
-                 for d in &self.drivers {
-                     if drv_str.contains(&d.to_lowercase()) {
-                         matched = true;
-                         break;
-                     }
-                 }
-             }
-             if !matched { return false; }
-        }
-
-        // 6. Keywords Matcher
+        // 5. Keywords Matcher
         if !self.keywords.is_empty() {
              let mut any_keyword_matched = false;
 
