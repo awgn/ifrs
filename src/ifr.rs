@@ -24,8 +24,6 @@ pub const SIOCETHTOOL: c_ulong = 0x8946;
 pub const SIOCGIFMTU: c_ulong = 0xc0206933;
 #[cfg(target_os = "macos")]
 pub const SIOCGIFMETRIC: c_ulong = 0xc020691d;
-#[cfg(target_os = "macos")]
-pub const SIOCGIFMEDIA: c_ulong = 0xc030693e;
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub const SIOCGIFMTU: c_ulong = 0;
@@ -75,18 +73,6 @@ pub struct IfReq {
     pub ifr_ifru: IfrData,
 }
 
-#[cfg(target_os = "macos")]
-#[repr(C)]
-pub struct IfMediaReq {
-    pub ifm_name: [c_char; 16],
-    pub ifm_current: c_int,
-    pub ifm_mask: c_int,
-    pub ifm_status: c_int,
-    pub ifm_active: c_int,
-    pub ifm_count: c_int,
-    pub ifm_ulist: *mut c_int,
-}
-
 impl IfReq {
     pub fn new(name: &str) -> Self {
         let mut req: IfReq = unsafe { mem::zeroed() };
@@ -125,9 +111,6 @@ nix::ioctl_write_ptr_bad!(ioctl_ethtool, SIOCETHTOOL, IfReq);
 nix::ioctl_read_bad!(ioctl_get_hwaddr, SIOCGIFHWADDR, IfReq);
 nix::ioctl_read_bad!(ioctl_get_mtu, SIOCGIFMTU, IfReq);
 nix::ioctl_read_bad!(ioctl_get_metric, SIOCGIFMETRIC, IfReq);
-#[cfg(target_os = "macos")]
-nix::ioctl_read_bad!(ioctl_get_media, SIOCGIFMEDIA, IfMediaReq);
-
 
 pub struct Interface {
     name: SmolStr,
