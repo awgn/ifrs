@@ -7,6 +7,45 @@ use crate::pci_utils;
 #[cfg(target_os = "macos")]
 use crate::macos;
 
+
+
+#[cfg(target_os = "linux")]
+fn get_altname(interface_name: &str) -> Option<SmolStr> {
+    use rtnetlink::new_connection;
+    use futures::stream::TryStreamExt;
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .ok()?;
+
+    rt.block_on(async {
+        let (connection, handle, _) = new_connection().ok()?;
+        tokio::spawn(connection);
+
+        let mut links = handle.link().get().match_name(interface_name.to_string()).execute();
+        if let Some(link) = links.try_next().await.ok()? {
+            for nla in &link.nlas {
+                if let rtnetlink::packet::link::nlas::Nla::PropList(prop_list) = nla {
+                    for prop in prop_list {
+                        if let rtnetlink::packet::link::nlas::Prop::AltIfName(altname) = prop {
+                            if !altname.is_empty() {
+                                return Some(SmolStr::from(altname.as_str()));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn get_altname(_interface_name: &str) -> Option<SmolStr> {
+    None
+}
+
 pub struct Matcher {
     pub keywords: Vec<SmolStr>,
     pub ipv4: bool,
@@ -129,6 +168,7 @@ pub struct CollectedInterface {
     pub flags_str: SmolStr,
     pub driver_info: Option<(SmolStr, SmolStr, SmolStr)>, // driver, version, bus_info
     pub pci_info: Option<pci_utils::PciDeviceInfo>,
+    pub altname: Option<SmolStr>,
     pub mtu: i32,
     pub metric: i32,
     pub media: SmolStr,
@@ -198,6 +238,8 @@ impl CollectedInterface {
         #[cfg(target_os = "linux")]
         let features = iif.ethtool_features().unwrap_or_default();
 
+        let altname = get_altname(name);
+
         Ok(Self {
             name: name.clone(),
             netns: nic.netns.clone(),
@@ -209,6 +251,7 @@ impl CollectedInterface {
             flags_str,
             driver_info,
             pci_info,
+            altname,
             mtu,
             metric,
             media,
@@ -260,6 +303,10 @@ impl CollectedInterface {
              if !bus.is_empty() {
                   println!("{}Bus:      {}", indent, bus);
              }
+        }
+
+        if let Some(altname) = &self.altname {
+            println!("{}Altname:  {}", indent, altname.blue());
         }
 
         if let Some(pci_info) = &self.pci_info {

@@ -89,6 +89,7 @@ pub struct PciDeviceInfo {
     pub class: Option<u8>,
     pub subclass: Option<u8>,
     pub revision: Option<u8>,
+    pub domain: Option<u16>,
     pub bus: Option<u8>,
     pub device: Option<u8>,
     pub function: Option<u8>,
@@ -118,7 +119,8 @@ impl PciDeviceInfo {
 
     pub fn pci_address(&self) -> Option<String> {
         if let (Some(bus), Some(dev), Some(func)) = (self.bus, self.device, self.function) {
-            Some(format!("{:02x}:{:02x}.{}", bus, dev, func))
+            let domain = self.domain.unwrap_or(0);
+            Some(format!("{:04x}:{:02x}:{:02x}.{}", domain, bus, dev, func))
         } else {
             None
         }
@@ -154,9 +156,9 @@ pub fn get_pci_devices() -> Result<HashMap<SmolStr, PciDeviceInfo>> {
                 }
 
                 let location = dev.location();
-                let (bus, device, function) = match location {
-                    Ok(loc) => (Some(loc.bus()), Some(loc.device()), Some(loc.function())),
-                    Err(_) => (None, None, None),
+                let (domain, bus, device, function) = match location {
+                    Ok(loc) => (Some(0), Some(loc.bus()), Some(loc.device()), Some(loc.function())),
+                    Err(_) => (None, None, None, None),
                 };
 
                 let mut info = PciDeviceInfo {
@@ -165,6 +167,7 @@ pub fn get_pci_devices() -> Result<HashMap<SmolStr, PciDeviceInfo>> {
                     class: Some(class),
                     subclass: Some(subclass),
                     revision: dev.revision().ok(),
+                    domain,
                     bus,
                     device,
                     function,
@@ -177,10 +180,10 @@ pub fn get_pci_devices() -> Result<HashMap<SmolStr, PciDeviceInfo>> {
                 info.subsystem_vendor = dev.subsystem_vendor_id().ok().flatten();
                 info.subsystem_device = dev.subsystem_device_id().ok().flatten();
 
-                if let (Some(b), Some(d), Some(f)) = (bus, device, function) {
+                if let (Some(dm), Some(b), Some(dv), Some(f)) = (domain, bus, device, function) {
                     use smol_str::format_smolstr;
 
-                    let key = format_smolstr!("{:02x}:{:02x}.{}", b, d, f);
+                    let key = format_smolstr!("{:04x}:{:02x}:{:02x}.{}", dm, b, dv, f);
                     devices.insert(key, info);
                 }
             }
@@ -222,27 +225,58 @@ pub fn find_pci_info_for_interface(
 fn parse_pci_address(bus_info: &str) -> Option<SmolStr> {
     let parts: Vec<&str> = bus_info.split(':').collect();
 
-    if parts.len() >= 2 {
-        let last_part = parts[parts.len() - 1];
-        let second_last = parts[parts.len() - 2];
-
-        if last_part.contains('.') {
-            let dev_func: Vec<&str> = last_part.split('.').collect();
+    let (domain, bus, dev, func) = if parts.len() == 3 {
+        // domain:bus:dev.func
+        let domain_str = parts[0];
+        let bus_str = parts[1];
+        let dev_func_str = parts[2];
+        if dev_func_str.contains('.') {
+            let dev_func: Vec<&str> = dev_func_str.split('.').collect();
             if dev_func.len() == 2 {
-                if let Ok(bus) = u8::from_str_radix(second_last, 16) {
-                    if let Ok(dev) = u8::from_str_radix(dev_func[0], 16) {
-                        if let Ok(func) = u8::from_str_radix(dev_func[1], 16) {
-                            use smol_str::format_smolstr;
-
-                            return Some(format_smolstr!("{:02x}:{:02x}.{}", bus, dev, func));
-                        }
-                    }
+                if let (Ok(domain), Ok(bus), Ok(dev), Ok(func)) = (
+                    u16::from_str_radix(domain_str, 16),
+                    u8::from_str_radix(bus_str, 16),
+                    u8::from_str_radix(dev_func[0], 16),
+                    u8::from_str_radix(dev_func[1], 16),
+                ) {
+                    (domain, bus, dev, func)
+                } else {
+                    return None;
                 }
+            } else {
+                return None;
             }
+        } else {
+            return None;
         }
-    }
+    } else if parts.len() == 2 {
+        // bus:dev.func, assume domain 0
+        let bus_str = parts[0];
+        let dev_func_str = parts[1];
+        if dev_func_str.contains('.') {
+            let dev_func: Vec<&str> = dev_func_str.split('.').collect();
+            if dev_func.len() == 2 {
+                if let (Ok(bus), Ok(dev), Ok(func)) = (
+                    u8::from_str_radix(bus_str, 16),
+                    u8::from_str_radix(dev_func[0], 16),
+                    u8::from_str_radix(dev_func[1], 16),
+                ) {
+                    (0, bus, dev, func)
+                } else {
+                    return None;
+                }
+            } else {
+                return None;
+            }
+        } else {
+            return None;
+        }
+    } else {
+        return None;
+    };
 
-    None
+    use smol_str::format_smolstr;
+    Some(format_smolstr!("{:04x}:{:02x}:{:02x}.{}", domain, bus, dev, func))
 }
 
 #[cfg(target_os = "linux")]
