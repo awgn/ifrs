@@ -125,7 +125,7 @@ impl PciDeviceInfo {
     }
 }
 
-#[cfg(all(feature = "pci-info", not(target_os = "macos")))]
+#[cfg(not(target_os = "macos"))]
 pub fn get_pci_devices() -> Result<HashMap<SmolStr, PciDeviceInfo>> {
     use pci_info::PciInfo;
 
@@ -193,10 +193,7 @@ pub fn get_pci_devices() -> Result<HashMap<SmolStr, PciDeviceInfo>> {
     Ok(devices)
 }
 
-#[cfg(all(not(feature = "pci-info"), not(target_os = "macos")))]
-pub fn get_pci_devices() -> Result<HashMap<SmolStr, PciDeviceInfo>> {
-    Ok(HashMap::new())
-}
+
 
 #[cfg(not(target_os = "macos"))]
 pub fn find_pci_info_for_interface(

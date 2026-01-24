@@ -8,8 +8,7 @@ use libc::{c_char, c_int, c_ulong, c_void};
 #[cfg(target_os = "linux")]
 use futures::stream::TryStreamExt;
 
-#[cfg(target_os = "macos")]
-use crate::macos;
+
 
 // IOCTL Constants
 #[cfg(target_os = "linux")]

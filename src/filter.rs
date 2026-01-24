@@ -165,7 +165,14 @@ impl CollectedInterface {
              let bus_str = unsafe { std::ffi::CStr::from_ptr(info.bus_info.as_ptr()) }.to_string_lossy();
              Some((SmolStr::from(drv_str), SmolStr::from(ver_str), SmolStr::from(bus_str)))
         } else {
-            None
+            #[cfg(target_os = "macos")]
+            {
+                macos::get_driver_info(name).map(|(drv, ver, bus)| (SmolStr::from(drv), SmolStr::from(ver), SmolStr::from(bus)))
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                None
+            }
         };
 
         let bus_str_owned = driver_info.as_ref().map(|(_, _, b)| b.as_str()).unwrap_or_default();

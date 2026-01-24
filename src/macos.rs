@@ -1,7 +1,7 @@
 use std::process::Command;
 use serde::Deserialize;
 use std::collections::HashMap;
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use crate::proc::Stats;
 use crate::pci_utils::PciDeviceInfo;
 
@@ -21,7 +21,7 @@ pub struct SystemProfilerOutput {
     pub network_data: Vec<NetworkInterface>,
 }
 
-pub static SYSTEM_PROFILER_DATA: Lazy<Option<HashMap<String, NetworkInterface>>> = Lazy::new(|| {
+pub static SYSTEM_PROFILER_DATA: LazyLock<Option<HashMap<String, NetworkInterface>>> = LazyLock::new(|| {
     let output = Command::new("system_profiler")
         .arg("SPNetworkDataType")
         .arg("-json")
@@ -43,6 +43,16 @@ pub static SYSTEM_PROFILER_DATA: Lazy<Option<HashMap<String, NetworkInterface>>>
 });
 
 pub fn get_driver_info(if_name: &str) -> Option<(String, String, String)> {
+    if let Some(pci_info) = get_pci_info_from_ioreg(if_name) {
+        if let Some(ref driver) = pci_info.driver {
+            let driver = driver.clone();
+            let version = "N/A".to_string();
+            let bus = pci_info.pci_address().unwrap_or_else(|| "N/A".to_string());
+            return Some((driver, version, bus));
+        }
+    }
+
+    // Fallback to system_profiler data
     let data = SYSTEM_PROFILER_DATA.as_ref()?;
     let iface = data.get(if_name)?;
 
@@ -84,13 +94,16 @@ fn get_pci_address_from_ioreg(if_name: &str) -> Option<String> {
         }
 
         // Alternative: look for "location" property
-        if line.contains("\"location\"") {
+        if line.contains("location") {
             if let Some(eq_pos) = line.find('=') {
                 let value = line[eq_pos+1..].trim();
                 if let Some(stripped) = value.strip_prefix('"') {
                     if let Some(end) = stripped.find('"') {
                         return Some(stripped[..end].to_string());
                     }
+                } else {
+                    // Not quoted, take the value as is
+                    return Some(value.to_string());
                 }
             }
         }
@@ -121,7 +134,7 @@ pub fn get_pci_info_from_ioreg(if_name: &str) -> Option<PciDeviceInfo> {
         let trimmed = line.trim();
 
         // Vendor ID
-        if trimmed.contains("\"vendor-id\"") {
+        if trimmed.contains("vendor-id") {
             if let Some(value) = extract_hex_value(trimmed) {
                 pci_info.vendor_id = value as u16;
                 found_any = true;
@@ -129,7 +142,7 @@ pub fn get_pci_info_from_ioreg(if_name: &str) -> Option<PciDeviceInfo> {
         }
 
         // Device ID
-        if trimmed.contains("\"device-id\"") {
+        if trimmed.contains("device-id") {
             if let Some(value) = extract_hex_value(trimmed) {
                 pci_info.device_id = value as u16;
                 found_any = true;
@@ -137,7 +150,7 @@ pub fn get_pci_info_from_ioreg(if_name: &str) -> Option<PciDeviceInfo> {
         }
 
         // Subsystem Vendor ID
-        if trimmed.contains("\"subsystem-vendor-id\"") {
+        if trimmed.contains("subsystem-vendor-id") {
             if let Some(value) = extract_hex_value(trimmed) {
                 pci_info.subsystem_vendor = Some(value as u16);
                 found_any = true;
@@ -145,7 +158,7 @@ pub fn get_pci_info_from_ioreg(if_name: &str) -> Option<PciDeviceInfo> {
         }
 
         // Subsystem ID
-        if trimmed.contains("\"subsystem-id\"") {
+        if trimmed.contains("subsystem-id") {
             if let Some(value) = extract_hex_value(trimmed) {
                 pci_info.subsystem_device = Some(value as u16);
                 found_any = true;
@@ -153,7 +166,7 @@ pub fn get_pci_info_from_ioreg(if_name: &str) -> Option<PciDeviceInfo> {
         }
 
         // Revision
-        if trimmed.contains("\"revision-id\"") {
+        if trimmed.contains("revision-id") {
             if let Some(value) = extract_hex_value(trimmed) {
                 pci_info.revision = Some(value as u8);
                 found_any = true;
@@ -161,7 +174,7 @@ pub fn get_pci_info_from_ioreg(if_name: &str) -> Option<PciDeviceInfo> {
         }
 
         // Class code
-        if trimmed.contains("\"class-code\"") {
+        if trimmed.contains("class-code") {
             if let Some(value) = extract_hex_value(trimmed) {
                 pci_info.class = Some(((value >> 16) & 0xFF) as u8);
                 pci_info.subclass = Some(((value >> 8) & 0xFF) as u8);
@@ -170,7 +183,7 @@ pub fn get_pci_info_from_ioreg(if_name: &str) -> Option<PciDeviceInfo> {
         }
 
         // IOName (driver)
-        if trimmed.contains("\"IOName\"") {
+        if trimmed.contains("IOName") {
             if let Some(name) = extract_string_value(trimmed) {
                 pci_info.driver = Some(name);
                 found_any = true;
@@ -186,7 +199,7 @@ pub fn get_pci_info_from_ioreg(if_name: &str) -> Option<PciDeviceInfo> {
 }
 
 fn extract_hex_value(line: &str) -> Option<u32> {
-    // Format: "key" = <hex_value>
+    // Format: key = <hex_value> or key = 0xhex_value
     if let Some(eq_pos) = line.find('=') {
         let value_part = line[eq_pos+1..].trim();
         if value_part.starts_with('<') && value_part.contains('>') {
@@ -194,19 +207,25 @@ fn extract_hex_value(line: &str) -> Option<u32> {
             // Handle both formats: "0x1234" and just "1234"
             let clean_hex = hex_str.trim_start_matches("0x");
             return u32::from_str_radix(clean_hex, 16).ok();
+        } else if value_part.starts_with("0x") {
+            let hex_str = value_part.trim_start_matches("0x");
+            return u32::from_str_radix(hex_str, 16).ok();
         }
     }
     None
 }
 
 fn extract_string_value(line: &str) -> Option<String> {
-    // Format: "key" = "value"
+    // Format: key = "value" or key = value
     if let Some(eq_pos) = line.find('=') {
         let value_part = line[eq_pos+1..].trim();
         if let Some(stripped) = value_part.strip_prefix('"') {
             if let Some(end) = stripped.find('"') {
                 return Some(stripped[..end].to_string());
             }
+        } else {
+            // Not quoted, take as is
+            return Some(value_part.to_string());
         }
     }
     None
