@@ -61,7 +61,8 @@ impl PciDb {
                     let parts: Vec<&str> = line.splitn(2, ' ').collect();
                     if parts.len() == 2 {
                         if let Ok(dev_id) = u16::from_str_radix(parts[0], 16) {
-                            self.devices.insert((vendor_id, dev_id), parts[1].trim().to_string());
+                            self.devices
+                                .insert((vendor_id, dev_id), parts[1].trim().to_string());
                         }
                     }
                 }
@@ -157,7 +158,12 @@ pub fn get_pci_devices() -> Result<HashMap<SmolStr, PciDeviceInfo>> {
 
                 let location = dev.location();
                 let (domain, bus, device, function) = match location {
-                    Ok(loc) => (Some(0), Some(loc.bus()), Some(loc.device()), Some(loc.function())),
+                    Ok(loc) => (
+                        Some(0),
+                        Some(loc.bus()),
+                        Some(loc.device()),
+                        Some(loc.function()),
+                    ),
                     Err(_) => (None, None, None, None),
                 };
 
@@ -195,8 +201,6 @@ pub fn get_pci_devices() -> Result<HashMap<SmolStr, PciDeviceInfo>> {
 
     Ok(devices)
 }
-
-
 
 #[cfg(not(target_os = "macos"))]
 pub fn find_pci_info_for_interface(
@@ -276,7 +280,13 @@ fn parse_pci_address(bus_info: &str) -> Option<SmolStr> {
     };
 
     use smol_str::format_smolstr;
-    Some(format_smolstr!("{:04x}:{:02x}:{:02x}.{}", domain, bus, dev, func))
+    Some(format_smolstr!(
+        "{:04x}:{:02x}:{:02x}.{}",
+        domain,
+        bus,
+        dev,
+        func
+    ))
 }
 
 #[cfg(target_os = "linux")]

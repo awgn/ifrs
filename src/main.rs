@@ -1,21 +1,21 @@
-use clap::Parser;
 use anyhow::Result;
+use clap::Parser;
+#[cfg(target_os = "linux")]
+use nix::sched::{setns, CloneFlags};
 use owo_colors::OwoColorize;
+use rayon::prelude::*;
 use smol_str::SmolStr;
 #[cfg(target_os = "linux")]
 use std::fs;
-#[cfg(target_os = "linux")]
-use nix::sched::{setns, CloneFlags};
-use rayon::prelude::*;
 
-mod ifr;
-mod proc;
-mod pci_utils;
 mod filter;
+mod ifr;
 #[cfg(target_os = "macos")]
 mod macos;
+mod pci_utils;
+mod proc;
 
-use filter::{Matcher, CollectedInterface};
+use filter::{CollectedInterface, Matcher};
 
 #[derive(Parser)]
 #[command(
@@ -74,36 +74,39 @@ fn main() -> Result<()> {
     #[cfg(target_os = "linux")]
     let original_ns = fs::File::open("/proc/self/ns/net").ok();
 
-    let results: Vec<_> = all_interfaces.par_iter().map(|nic| {
-        // --- Namespace Switching (Linux specific) ---
-        #[cfg(target_os = "linux")]
-        let mut switched_ns = false;
-        #[cfg(target_os = "linux")]
-        if let (Some(ns_name), Some(_)) = (&nic.netns, &original_ns) {
-            if let Ok(ns_file) = fs::File::open(format!("/var/run/netns/{}", ns_name)) {
-                if setns(ns_file, CloneFlags::CLONE_NEWNET).is_ok() {
-                    switched_ns = true;
+    let results: Vec<_> = all_interfaces
+        .par_iter()
+        .map(|nic| {
+            // --- Namespace Switching (Linux specific) ---
+            #[cfg(target_os = "linux")]
+            let mut switched_ns = false;
+            #[cfg(target_os = "linux")]
+            if let (Some(ns_name), Some(_)) = (&nic.netns, &original_ns) {
+                if let Ok(ns_file) = fs::File::open(format!("/var/run/netns/{}", ns_name)) {
+                    if setns(ns_file, CloneFlags::CLONE_NEWNET).is_ok() {
+                        switched_ns = true;
+                    }
                 }
             }
-        }
 
-        let result: Result<CollectedInterface> = (|| {
-            #[cfg(not(target_os = "macos"))]
-            let info = CollectedInterface::gather(nic, &pci_devices)?;
-            #[cfg(target_os = "macos")]
-            let info = CollectedInterface::gather(nic)?;
-            Ok(info)
-        })();
+            let result: Result<CollectedInterface> = (|| {
+                #[cfg(not(target_os = "macos"))]
+                let info = CollectedInterface::gather(nic, &pci_devices)?;
+                #[cfg(target_os = "macos")]
+                let info = CollectedInterface::gather(nic)?;
+                Ok(info)
+            })();
 
-        #[cfg(target_os = "linux")]
-        if switched_ns {
-            if let Some(ref orig_ns) = original_ns {
-                let _ = setns(orig_ns, CloneFlags::CLONE_NEWNET);
+            #[cfg(target_os = "linux")]
+            if switched_ns {
+                if let Some(ref orig_ns) = original_ns {
+                    let _ = setns(orig_ns, CloneFlags::CLONE_NEWNET);
+                }
             }
-        }
 
-        (nic, result)
-    }).collect();
+            (nic, result)
+        })
+        .collect();
 
     for (nic, result) in results {
         match result {

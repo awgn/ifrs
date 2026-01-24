@@ -1,18 +1,16 @@
-use smol_str::SmolStr;
-use anyhow::Result;
-use owo_colors::OwoColorize;
 use crate::ifr;
-use crate::proc;
-use crate::pci_utils;
 #[cfg(target_os = "macos")]
 use crate::macos;
-
-
+use crate::pci_utils;
+use crate::proc;
+use anyhow::Result;
+use owo_colors::OwoColorize;
+use smol_str::SmolStr;
 
 #[cfg(target_os = "linux")]
 fn get_altname(interface_name: &str) -> Option<SmolStr> {
-    use rtnetlink::new_connection;
     use futures::stream::TryStreamExt;
+    use rtnetlink::new_connection;
 
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -23,7 +21,11 @@ fn get_altname(interface_name: &str) -> Option<SmolStr> {
         let (connection, handle, _) = new_connection().ok()?;
         tokio::spawn(connection);
 
-        let mut links = handle.link().get().match_name(interface_name.to_string()).execute();
+        let mut links = handle
+            .link()
+            .get()
+            .match_name(interface_name.to_string())
+            .execute();
         if let Some(link) = links.try_next().await.ok()? {
             for nla in &link.nlas {
                 if let rtnetlink::packet::link::nlas::Nla::PropList(prop_list) = nla {
@@ -74,42 +76,48 @@ impl Matcher {
 
         // 4. Check -a (all) vs UP status
         let explicit_name_match = if !self.keywords.is_empty() {
-             self.keywords.iter().any(|k| k.as_str() == info.name.as_str())
+            self.keywords
+                .iter()
+                .any(|k| k.as_str() == info.name.as_str())
         } else {
-             false
+            false
         };
 
         if !self.all && !info.is_up && !explicit_name_match {
-             return false;
+            return false;
         }
 
         // 5. Keywords Matcher
         if !self.keywords.is_empty() {
-             let mut any_keyword_matched = false;
+            let mut any_keyword_matched = false;
 
-             let targets = vec![
-                 info.name.as_str(),
-                 info.flags_str.as_str(),
-                 info.media.as_str(),
-             ];
+            let targets = vec![
+                info.name.as_str(),
+                info.flags_str.as_str(),
+                info.media.as_str(),
+            ];
 
-             for keyword in &self.keywords {
-                 if self.check_match(keyword.as_str(), &targets, info) {
-                     any_keyword_matched = true;
-                     break;
-                 }
-             }
+            for keyword in &self.keywords {
+                if self.check_match(keyword.as_str(), &targets, info) {
+                    any_keyword_matched = true;
+                    break;
+                }
+            }
 
-             if !any_keyword_matched {
-                 return false;
-             }
+            if !any_keyword_matched {
+                return false;
+            }
         }
 
         true
     }
 
     fn check_match(&self, keyword: &str, targets: &[&str], info: &CollectedInterface) -> bool {
-        let k = if self.ignore_case { keyword.to_lowercase() } else { keyword.to_string() };
+        let k = if self.ignore_case {
+            keyword.to_lowercase()
+        } else {
+            keyword.to_string()
+        };
 
         let check = |s: &str| {
             if self.ignore_case {
@@ -120,36 +128,56 @@ impl Matcher {
         };
 
         for t in targets {
-            if check(t) { return true; }
+            if check(t) {
+                return true;
+            }
         }
 
         if let Some(mac) = &info.mac {
-            if check(mac.as_str()) { return true; }
+            if check(mac.as_str()) {
+                return true;
+            }
         }
 
         for (ip, _, _) in &info.ipv4 {
-            if check(ip.as_str()) { return true; }
+            if check(ip.as_str()) {
+                return true;
+            }
         }
 
         for (ip, _, _) in &info.ipv6 {
-            if check(ip.as_str()) { return true; }
+            if check(ip.as_str()) {
+                return true;
+            }
         }
 
         if let Some((drv, ver, bus)) = &info.driver_info {
-            if check(drv.as_str()) { return true; }
-            if check(ver.as_str()) { return true; }
-            if check(bus.as_str()) { return true; }
+            if check(drv.as_str()) {
+                return true;
+            }
+            if check(ver.as_str()) {
+                return true;
+            }
+            if check(bus.as_str()) {
+                return true;
+            }
         }
 
         if let Some(pci) = &info.pci_info {
             if let Some(addr) = pci.pci_address() {
-                if check(&addr) { return true; }
+                if check(&addr) {
+                    return true;
+                }
             }
             if let Some(vendor) = &pci.vendor_name {
-                if check(vendor) { return true; }
+                if check(vendor) {
+                    return true;
+                }
             }
             if let Some(device) = &pci.device_name {
-                if check(device) { return true; }
+                if check(device) {
+                    return true;
+                }
             }
         }
 
@@ -184,7 +212,10 @@ pub struct CollectedInterface {
 impl CollectedInterface {
     pub fn gather(
         nic: &proc::LinuxNic,
-        #[cfg(not(target_os = "macos"))] pci_devices: &std::collections::HashMap<SmolStr, pci_utils::PciDeviceInfo>
+        #[cfg(not(target_os = "macos"))] pci_devices: &std::collections::HashMap<
+            SmolStr,
+            pci_utils::PciDeviceInfo,
+        >,
     ) -> Result<Self> {
         let name = &nic.name;
         let iif = ifr::Interface::new(name)?;
@@ -200,14 +231,23 @@ impl CollectedInterface {
 
         let drv_info_raw = iif.ethtool_drvinfo().ok();
         let driver_info = if let Some(info) = drv_info_raw {
-             let drv_str = unsafe { std::ffi::CStr::from_ptr(info.driver.as_ptr()) }.to_string_lossy();
-             let ver_str = unsafe { std::ffi::CStr::from_ptr(info.version.as_ptr()) }.to_string_lossy();
-             let bus_str = unsafe { std::ffi::CStr::from_ptr(info.bus_info.as_ptr()) }.to_string_lossy();
-             Some((SmolStr::from(drv_str), SmolStr::from(ver_str), SmolStr::from(bus_str)))
+            let drv_str =
+                unsafe { std::ffi::CStr::from_ptr(info.driver.as_ptr()) }.to_string_lossy();
+            let ver_str =
+                unsafe { std::ffi::CStr::from_ptr(info.version.as_ptr()) }.to_string_lossy();
+            let bus_str =
+                unsafe { std::ffi::CStr::from_ptr(info.bus_info.as_ptr()) }.to_string_lossy();
+            Some((
+                SmolStr::from(drv_str),
+                SmolStr::from(ver_str),
+                SmolStr::from(bus_str),
+            ))
         } else {
             #[cfg(target_os = "macos")]
             {
-                macos::get_driver_info(name).map(|(drv, ver, bus)| (SmolStr::from(drv), SmolStr::from(ver), SmolStr::from(bus)))
+                macos::get_driver_info(name).map(|(drv, ver, bus)| {
+                    (SmolStr::from(drv), SmolStr::from(ver), SmolStr::from(bus))
+                })
             }
             #[cfg(not(target_os = "macos"))]
             {
@@ -215,7 +255,10 @@ impl CollectedInterface {
             }
         };
 
-        let bus_str_owned = driver_info.as_ref().map(|(_, _, b)| b.as_str()).unwrap_or_default();
+        let bus_str_owned = driver_info
+            .as_ref()
+            .map(|(_, _, b)| b.as_str())
+            .unwrap_or_default();
 
         #[cfg(not(target_os = "macos"))]
         let pci_info = pci_utils::find_pci_info_for_interface(name, bus_str_owned, pci_devices);
@@ -227,7 +270,9 @@ impl CollectedInterface {
         let mtu = iif.mtu().unwrap_or(0);
         let metric = iif.metric().unwrap_or(0);
 
-        let media = iif.media().unwrap_or_else(|_| SmolStr::new_static("unknown"));
+        let media = iif
+            .media()
+            .unwrap_or_else(|_| SmolStr::new_static("unknown"));
 
         let stats = proc::get_stats(name).ok();
 
@@ -291,18 +336,18 @@ impl CollectedInterface {
         }
 
         for (addr, plen, _scope) in &self.ipv6 {
-             println!("{}IPv6:     {}/{}", indent, addr.blue(), plen);
+            println!("{}IPv6:     {}/{}", indent, addr.blue(), plen);
         }
 
         if !self.flags_str.is_empty() {
-             println!("{}Flags:    {}", indent, self.flags_str.dimmed());
+            println!("{}Flags:    {}", indent, self.flags_str.dimmed());
         }
 
         if let Some((drv, ver, bus)) = &self.driver_info {
-             println!("{}Driver:   {} (v: {})", indent, drv.blue().bold(), ver);
-             if !bus.is_empty() {
-                  println!("{}Bus:      {}", indent, bus);
-             }
+            println!("{}Driver:   {} (v: {})", indent, drv.blue().bold(), ver);
+            if !bus.is_empty() {
+                println!("{}Bus:      {}", indent, bus);
+            }
         }
 
         if let Some(altname) = &self.altname {
@@ -315,9 +360,17 @@ impl CollectedInterface {
             }
 
             if let (Some(vendor), Some(device)) = (&pci_info.vendor_name, &pci_info.device_name) {
-                println!("{}Device:   {} {}", indent, vendor.bright_blue(), device.bright_blue());
+                println!(
+                    "{}Device:   {} {}",
+                    indent,
+                    vendor.bright_blue(),
+                    device.bright_blue()
+                );
             } else if pci_info.vendor_id != 0 || pci_info.device_id != 0 {
-                println!("{}Device:   [{:04x}:{:04x}]", indent, pci_info.vendor_id, pci_info.device_id);
+                println!(
+                    "{}Device:   [{:04x}:{:04x}]",
+                    indent, pci_info.vendor_id, pci_info.device_id
+                );
             }
 
             if verbose {
@@ -343,20 +396,21 @@ impl CollectedInterface {
             }
             if let Some((rx, tx, other, combined)) = self.channels {
                 if rx > 0 || tx > 0 || other > 0 || combined > 0 {
-                    println!("{}Channels: RX: {}, TX: {}, Other: {}, Combined: {}",
-                        indent, rx, tx, other, combined);
+                    println!(
+                        "{}Channels: RX: {}, TX: {}, Other: {}, Combined: {}",
+                        indent, rx, tx, other, combined
+                    );
                 }
             }
         }
 
         if let Some(stats) = &self.stats {
-             if stats.rx_bytes > 0 || stats.tx_bytes > 0 {
-                  println!("{}Stats:    RX: {} bytes ({} pkts), TX: {} bytes ({} pkts)",
-                      indent,
-                      stats.rx_bytes, stats.rx_packets,
-                      stats.tx_bytes, stats.tx_packets
-                  );
-             }
+            if stats.rx_bytes > 0 || stats.tx_bytes > 0 {
+                println!(
+                    "{}Stats:    RX: {} bytes ({} pkts), TX: {} bytes ({} pkts)",
+                    indent, stats.rx_bytes, stats.rx_packets, stats.tx_bytes, stats.tx_packets
+                );
+            }
         }
 
         println!();

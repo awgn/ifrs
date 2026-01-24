@@ -1,14 +1,12 @@
-use std::io;
+use libc::{c_char, c_int, c_ulong, c_void};
+use nix::sys::socket::{socket, AddressFamily, SockFlag, SockType};
 use smol_str::SmolStr;
+use std::io;
 use std::mem;
 use std::os::fd::{AsRawFd, OwnedFd};
-use nix::sys::socket::{socket, AddressFamily, SockFlag, SockType};
-use libc::{c_char, c_int, c_ulong, c_void};
 
 #[cfg(target_os = "linux")]
 use futures::stream::TryStreamExt;
-
-
 
 // IOCTL Constants
 #[cfg(target_os = "linux")]
@@ -120,8 +118,13 @@ pub struct Interface {
 impl Interface {
     pub fn new(name: &str) -> io::Result<Self> {
         // Create a dummy socket for ioctls
-        let sock = socket(AddressFamily::Inet, SockType::Datagram, SockFlag::empty(), None)
-            .map_err(io::Error::other)?;
+        let sock = socket(
+            AddressFamily::Inet,
+            SockType::Datagram,
+            SockFlag::empty(),
+            None,
+        )
+        .map_err(io::Error::other)?;
 
         Ok(Self {
             name: SmolStr::from(name),
@@ -136,7 +139,10 @@ impl Interface {
                 return Ok(ifa.flags.bits() as i16);
             }
         }
-        Err(io::Error::new(io::ErrorKind::NotFound, "Interface not found"))
+        Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "Interface not found",
+        ))
     }
 
     pub fn is_up(&self) -> bool {
@@ -160,61 +166,130 @@ impl Interface {
         #[cfg(target_os = "macos")]
         {
             // macOS / BSD flags
-            if flags & 0x1 != 0 { ret.push("UP"); }
-            if flags & 0x2 != 0 { ret.push("BROADCAST"); }
-            if flags & 0x4 != 0 { ret.push("DEBUG"); }
-            if flags & 0x8 != 0 { ret.push("LOOPBACK"); }
-            if flags & 0x10 != 0 { ret.push("POINTOPOINT"); }
-            if flags & 0x20 != 0 { ret.push("SMART"); }
-            if flags & 0x40 != 0 { ret.push("RUNNING"); }
-            if flags & 0x80 != 0 { ret.push("NOARP"); }
-            if flags & 0x100 != 0 { ret.push("PROMISC"); }
-            if flags & 0x200 != 0 { ret.push("ALLMULTI"); }
-            if flags & 0x400 != 0 { ret.push("OACTIVE"); }
-            if flags & 0x800 != 0 { ret.push("SIMPLEX"); }
-            if flags & 0x1000 != 0 { ret.push("LINK0"); }
-            if flags & 0x2000 != 0 { ret.push("LINK1"); }
-            if flags & 0x4000 != 0 { ret.push("LINK2"); }
-            if flags & 0x8000 != 0 { ret.push("MULTICAST"); }
+            if flags & 0x1 != 0 {
+                ret.push("UP");
+            }
+            if flags & 0x2 != 0 {
+                ret.push("BROADCAST");
+            }
+            if flags & 0x4 != 0 {
+                ret.push("DEBUG");
+            }
+            if flags & 0x8 != 0 {
+                ret.push("LOOPBACK");
+            }
+            if flags & 0x10 != 0 {
+                ret.push("POINTOPOINT");
+            }
+            if flags & 0x20 != 0 {
+                ret.push("SMART");
+            }
+            if flags & 0x40 != 0 {
+                ret.push("RUNNING");
+            }
+            if flags & 0x80 != 0 {
+                ret.push("NOARP");
+            }
+            if flags & 0x100 != 0 {
+                ret.push("PROMISC");
+            }
+            if flags & 0x200 != 0 {
+                ret.push("ALLMULTI");
+            }
+            if flags & 0x400 != 0 {
+                ret.push("OACTIVE");
+            }
+            if flags & 0x800 != 0 {
+                ret.push("SIMPLEX");
+            }
+            if flags & 0x1000 != 0 {
+                ret.push("LINK0");
+            }
+            if flags & 0x2000 != 0 {
+                ret.push("LINK1");
+            }
+            if flags & 0x4000 != 0 {
+                ret.push("LINK2");
+            }
+            if flags & 0x8000 != 0 {
+                ret.push("MULTICAST");
+            }
         }
 
         #[cfg(not(target_os = "macos"))]
         {
             // Standard Linux-like flags
-            if flags & 0x1 != 0 { ret.push("UP"); }
-            if flags & 0x2 != 0 { ret.push("BROADCAST"); }
-            if flags & 0x4 != 0 { ret.push("DEBUG"); }
-            if flags & 0x8 != 0 { ret.push("LOOPBACK"); }
-            if flags & 0x10 != 0 { ret.push("PTP"); }
-            if flags & 0x20 != 0 { ret.push("NOTRAILERS"); }
-            if flags & 0x40 != 0 { ret.push("RUNNING"); }
-            if flags & 0x80 != 0 { ret.push("NOARP"); }
-            if flags & 0x100 != 0 { ret.push("PROMISC"); }
-            if flags & 0x200 != 0 { ret.push("ALLMULTI"); }
-            if flags & 0x400 != 0 { ret.push("MASTER"); }
-            if flags & 0x800 != 0 { ret.push("SLAVE"); }
-            if flags & 0x1000 != 0 { ret.push("MULTICAST"); }
-            if flags & 0x2000 != 0 { ret.push("PORTSEL"); }
-            if flags & 0x4000 != 0 { ret.push("AUTOMEDIA"); }
-            if flags & 0x8000 != 0 { ret.push("DYNAMIC"); }
+            if flags & 0x1 != 0 {
+                ret.push("UP");
+            }
+            if flags & 0x2 != 0 {
+                ret.push("BROADCAST");
+            }
+            if flags & 0x4 != 0 {
+                ret.push("DEBUG");
+            }
+            if flags & 0x8 != 0 {
+                ret.push("LOOPBACK");
+            }
+            if flags & 0x10 != 0 {
+                ret.push("PTP");
+            }
+            if flags & 0x20 != 0 {
+                ret.push("NOTRAILERS");
+            }
+            if flags & 0x40 != 0 {
+                ret.push("RUNNING");
+            }
+            if flags & 0x80 != 0 {
+                ret.push("NOARP");
+            }
+            if flags & 0x100 != 0 {
+                ret.push("PROMISC");
+            }
+            if flags & 0x200 != 0 {
+                ret.push("ALLMULTI");
+            }
+            if flags & 0x400 != 0 {
+                ret.push("MASTER");
+            }
+            if flags & 0x800 != 0 {
+                ret.push("SLAVE");
+            }
+            if flags & 0x1000 != 0 {
+                ret.push("MULTICAST");
+            }
+            if flags & 0x2000 != 0 {
+                ret.push("PORTSEL");
+            }
+            if flags & 0x4000 != 0 {
+                ret.push("AUTOMEDIA");
+            }
+            if flags & 0x8000 != 0 {
+                ret.push("DYNAMIC");
+            }
         }
 
         SmolStr::from(ret.join(" "))
     }
-
-
 
     #[cfg(target_os = "linux")]
     pub fn mac(&self) -> io::Result<SmolStr> {
         use smol_str::format_smolstr;
 
         let mut req = IfReq::new(&self.name);
-        unsafe { ioctl_get_hwaddr(self.sock.as_raw_fd(), &mut req) }.map_err(|e| io::Error::from_raw_os_error(e as i32))?;
+        unsafe { ioctl_get_hwaddr(self.sock.as_raw_fd(), &mut req) }
+            .map_err(|e| io::Error::from_raw_os_error(e as i32))?;
         let addr = unsafe { req.ifr_ifru.ifru_hwaddr.sa_data };
         // sa_data is [i8; 14]. MAC is first 6.
-        Ok(format_smolstr!("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-            addr[0] as u8, addr[1] as u8, addr[2] as u8,
-            addr[3] as u8, addr[4] as u8, addr[5] as u8))
+        Ok(format_smolstr!(
+            "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+            addr[0] as u8,
+            addr[1] as u8,
+            addr[2] as u8,
+            addr[3] as u8,
+            addr[4] as u8,
+            addr[5] as u8
+        ))
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -224,12 +299,16 @@ impl Interface {
             if ifa.interface_name == self.name {
                 if let Some(address) = ifa.address {
                     if let Some(link) = address.as_link_addr() {
-                         if let Some(addr) = link.addr() {
+                        if let Some(addr) = link.addr() {
                             use smol_str::format_smolstr;
 
-                             let s = addr.iter().map(|b| format_smolstr!("{:02x}", b)).collect::<Vec<_>>().join(":");
-                             return Ok(s.into());
-                         }
+                            let s = addr
+                                .iter()
+                                .map(|b| format_smolstr!("{:02x}", b))
+                                .collect::<Vec<_>>()
+                                .join(":");
+                            return Ok(s.into());
+                        }
                     }
                 }
             }
@@ -239,14 +318,21 @@ impl Interface {
 
     pub fn mtu(&self) -> io::Result<i32> {
         let mut req = IfReq::new(&self.name);
-        unsafe { ioctl_get_mtu(self.sock.as_raw_fd(), &mut req) }.map_err(|e| io::Error::from_raw_os_error(e as i32))?;
+        unsafe { ioctl_get_mtu(self.sock.as_raw_fd(), &mut req) }
+            .map_err(|e| io::Error::from_raw_os_error(e as i32))?;
         unsafe { Ok(req.ifr_ifru.ifru_mtu) }
     }
 
     pub fn metric(&self) -> io::Result<i32> {
         let mut req = IfReq::new(&self.name);
         match unsafe { ioctl_get_metric(self.sock.as_raw_fd(), &mut req) } {
-            Ok(_) => unsafe { Ok(if req.ifr_ifru.ifru_ivalue == 0 { 1 } else { req.ifr_ifru.ifru_ivalue }) },
+            Ok(_) => unsafe {
+                Ok(if req.ifr_ifru.ifru_ivalue == 0 {
+                    1
+                } else {
+                    req.ifr_ifru.ifru_ivalue
+                })
+            },
             Err(e) => Err(io::Error::from_raw_os_error(e as i32)),
         }
     }
@@ -258,22 +344,33 @@ impl Interface {
             for ifa in addrs {
                 if ifa.interface_name == self.name {
                     if let Some(address) = ifa.address {
-                         if let Some(sockaddr) = address.as_sockaddr_in() {
-                             let ip_u32 = sockaddr.ip();
-                             let ip = std::net::Ipv4Addr::from(ip_u32);
+                        if let Some(sockaddr) = address.as_sockaddr_in() {
+                            let ip_u32 = sockaddr.ip();
+                            let ip = std::net::Ipv4Addr::from(ip_u32);
 
-                             let mask_opt = ifa.netmask.as_ref().and_then(|a| a.as_sockaddr_in().map(|s| s.ip()));
+                            let mask_opt = ifa
+                                .netmask
+                                .as_ref()
+                                .and_then(|a| a.as_sockaddr_in().map(|s| s.ip()));
 
-                             if let Some(mask_u32) = mask_opt {
-                                 let mask_ip = std::net::Ipv4Addr::from(mask_u32);
-                                 // Mask is u32.
-                                 let prefix = u32::from(mask_ip).count_ones() as i32;
+                            if let Some(mask_u32) = mask_opt {
+                                let mask_ip = std::net::Ipv4Addr::from(mask_u32);
+                                // Mask is u32.
+                                let prefix = u32::from(mask_ip).count_ones() as i32;
 
-                                 ret.push((SmolStr::from(ip.to_string()), SmolStr::from(mask_ip.to_string()), prefix));
-                             } else {
-                                 ret.push((SmolStr::from(ip.to_string()), SmolStr::new_static(""), 0));
-                             }
-                         }
+                                ret.push((
+                                    SmolStr::from(ip.to_string()),
+                                    SmolStr::from(mask_ip.to_string()),
+                                    prefix,
+                                ));
+                            } else {
+                                ret.push((
+                                    SmolStr::from(ip.to_string()),
+                                    SmolStr::new_static(""),
+                                    0,
+                                ));
+                            }
+                        }
                     }
                 }
             }
@@ -308,7 +405,10 @@ impl Interface {
 
     #[cfg(not(target_os = "linux"))]
     pub fn ethtool_drvinfo(&self) -> io::Result<EthtoolDrvInfo> {
-        Err(io::Error::new(io::ErrorKind::Unsupported, "Not supported on this OS"))
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Not supported on this OS",
+        ))
     }
 
     /// Get media/link information using ethtool
@@ -320,8 +420,8 @@ impl Interface {
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
         rt.block_on(async {
-            let (connection, mut handle, _) = ethtool::new_connection()
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            let (connection, mut handle, _) =
+                ethtool::new_connection().map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
             tokio::spawn(connection);
 
@@ -377,16 +477,12 @@ impl Interface {
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
         rt.block_on(async {
-            let (connection, mut handle, _) = ethtool::new_connection()
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            let (connection, mut handle, _) =
+                ethtool::new_connection().map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
             tokio::spawn(connection);
 
-            let mut ring_handle = handle
-                .ring()
-                .get(Some(self.name.as_str()))
-                .execute()
-                .await;
+            let mut ring_handle = handle.ring().get(Some(self.name.as_str())).execute().await;
 
             if let Ok(Some(msg)) = ring_handle.try_next().await {
                 use ethtool::{EthtoolAttr, EthtoolRingAttr};
@@ -413,7 +509,10 @@ impl Interface {
 
     #[cfg(not(target_os = "linux"))]
     pub fn ethtool_rings(&self) -> io::Result<(u32, u32)> {
-        Err(io::Error::new(io::ErrorKind::Unsupported, "Ring info not available on this OS"))
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Ring info not available on this OS",
+        ))
     }
 
     /// Get channel parameters (number of RX/TX queues)
@@ -425,8 +524,8 @@ impl Interface {
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
         rt.block_on(async {
-            let (connection, mut handle, _) = ethtool::new_connection()
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            let (connection, mut handle, _) =
+                ethtool::new_connection().map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
             tokio::spawn(connection);
 
@@ -465,7 +564,10 @@ impl Interface {
 
     #[cfg(not(target_os = "linux"))]
     pub fn ethtool_channels(&self) -> io::Result<(u32, u32, u32, u32)> {
-        Err(io::Error::new(io::ErrorKind::Unsupported, "Channel info not available on this OS"))
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Channel info not available on this OS",
+        ))
     }
 
     /// Get active features/offloads (TSO, GSO, GRO, checksumming, etc.)
@@ -477,8 +579,8 @@ impl Interface {
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
         rt.block_on(async {
-            let (connection, mut handle, _) = ethtool::new_connection()
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            let (connection, mut handle, _) =
+                ethtool::new_connection().map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
             tokio::spawn(connection);
 
@@ -532,6 +634,9 @@ impl Interface {
 
     #[cfg(not(target_os = "linux"))]
     pub fn ethtool_features(&self) -> io::Result<Vec<SmolStr>> {
-        Err(io::Error::new(io::ErrorKind::Unsupported, "Feature info not available on this OS"))
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Feature info not available on this OS",
+        ))
     }
 }

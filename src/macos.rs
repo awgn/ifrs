@@ -1,9 +1,9 @@
-use std::process::Command;
+use crate::pci_utils::PciDeviceInfo;
+use crate::proc::Stats;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::process::Command;
 use std::sync::LazyLock;
-use crate::proc::Stats;
-use crate::pci_utils::PciDeviceInfo;
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct NetworkInterface {
@@ -21,26 +21,27 @@ pub struct SystemProfilerOutput {
     pub network_data: Vec<NetworkInterface>,
 }
 
-pub static SYSTEM_PROFILER_DATA: LazyLock<Option<HashMap<String, NetworkInterface>>> = LazyLock::new(|| {
-    let output = Command::new("system_profiler")
-        .arg("SPNetworkDataType")
-        .arg("-json")
-        .output()
-        .ok()?;
+pub static SYSTEM_PROFILER_DATA: LazyLock<Option<HashMap<String, NetworkInterface>>> =
+    LazyLock::new(|| {
+        let output = Command::new("system_profiler")
+            .arg("SPNetworkDataType")
+            .arg("-json")
+            .output()
+            .ok()?;
 
-    if !output.status.success() {
-        return None;
-    }
-
-    let parsed: SystemProfilerOutput = serde_json::from_slice(&output.stdout).ok()?;
-    let mut map = HashMap::new();
-    for iface in parsed.network_data {
-        if let Some(name) = &iface.interface {
-            map.insert(name.clone(), iface);
+        if !output.status.success() {
+            return None;
         }
-    }
-    Some(map)
-});
+
+        let parsed: SystemProfilerOutput = serde_json::from_slice(&output.stdout).ok()?;
+        let mut map = HashMap::new();
+        for iface in parsed.network_data {
+            if let Some(name) = &iface.interface {
+                map.insert(name.clone(), iface);
+            }
+        }
+        Some(map)
+    });
 
 pub fn get_driver_info(if_name: &str) -> Option<(String, String, String)> {
     if let Some(pci_info) = get_pci_info_from_ioreg(if_name) {
@@ -56,7 +57,11 @@ pub fn get_driver_info(if_name: &str) -> Option<(String, String, String)> {
     let data = SYSTEM_PROFILER_DATA.as_ref()?;
     let iface = data.get(if_name)?;
 
-    let driver = iface.hardware.clone().or(iface.type_.clone()).unwrap_or_else(|| "Unknown".to_string());
+    let driver = iface
+        .hardware
+        .clone()
+        .or(iface.type_.clone())
+        .unwrap_or_else(|| "Unknown".to_string());
     // System profiler doesn't give driver version easily.
     let version = "N/A".to_string();
 
@@ -87,8 +92,8 @@ fn get_pci_address_from_ioreg(if_name: &str) -> Option<String> {
         if line.contains("pcidebug") || line.contains("IOPCIDevice") {
             // Try to extract something like "PCI0@0/RP03@1C,2/PXSX@0"
             if let Some(start) = line.find("\"") {
-                if let Some(end) = line[start+1..].find("\"") {
-                    return Some(line[start+1..start+1+end].to_string());
+                if let Some(end) = line[start + 1..].find("\"") {
+                    return Some(line[start + 1..start + 1 + end].to_string());
                 }
             }
         }
@@ -96,7 +101,7 @@ fn get_pci_address_from_ioreg(if_name: &str) -> Option<String> {
         // Alternative: look for "location" property
         if line.contains("location") {
             if let Some(eq_pos) = line.find('=') {
-                let value = line[eq_pos+1..].trim();
+                let value = line[eq_pos + 1..].trim();
                 if let Some(stripped) = value.strip_prefix('"') {
                     if let Some(end) = stripped.find('"') {
                         return Some(stripped[..end].to_string());
@@ -201,9 +206,12 @@ pub fn get_pci_info_from_ioreg(if_name: &str) -> Option<PciDeviceInfo> {
 fn extract_hex_value(line: &str) -> Option<u32> {
     // Format: key = <hex_value> or key = 0xhex_value
     if let Some(eq_pos) = line.find('=') {
-        let value_part = line[eq_pos+1..].trim();
+        let value_part = line[eq_pos + 1..].trim();
         if value_part.starts_with('<') && value_part.contains('>') {
-            let hex_str = value_part.trim_start_matches('<').trim_end_matches('>').trim();
+            let hex_str = value_part
+                .trim_start_matches('<')
+                .trim_end_matches('>')
+                .trim();
             // Handle both formats: "0x1234" and just "1234"
             let clean_hex = hex_str.trim_start_matches("0x");
             return u32::from_str_radix(clean_hex, 16).ok();
@@ -218,7 +226,7 @@ fn extract_hex_value(line: &str) -> Option<u32> {
 fn extract_string_value(line: &str) -> Option<String> {
     // Format: key = "value" or key = value
     if let Some(eq_pos) = line.find('=') {
-        let value_part = line[eq_pos+1..].trim();
+        let value_part = line[eq_pos + 1..].trim();
         if let Some(stripped) = value_part.strip_prefix('"') {
             if let Some(end) = stripped.find('"') {
                 return Some(stripped[..end].to_string());
