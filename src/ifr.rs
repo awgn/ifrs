@@ -18,10 +18,6 @@ pub const SIOCGIFMTU: c_ulong = 0x8921;
 #[cfg(target_os = "linux")]
 pub const SIOCGIFMETRIC: c_ulong = 0x891d;
 #[cfg(target_os = "linux")]
-pub const SIOCGIFMAP: c_ulong = 0x8970;
-#[cfg(target_os = "linux")]
-pub const SIOCGIFTXQLEN: c_ulong = 0x8942;
-#[cfg(target_os = "linux")]
 pub const SIOCETHTOOL: c_ulong = 0x8946;
 
 #[cfg(target_os = "macos")]
@@ -31,10 +27,6 @@ pub const SIOCGIFMETRIC: c_ulong = 0xc020691d;
 #[cfg(target_os = "macos")]
 pub const SIOCGIFMEDIA: c_ulong = 0xc030693e;
 
-
-
-
-
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub const SIOCGIFMTU: c_ulong = 0;
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -43,10 +35,6 @@ pub const SIOCGIFMETRIC: c_ulong = 0;
 // Ethtool Constants
 #[cfg(target_os = "linux")]
 pub const ETHTOOL_GDRVINFO: u32 = 0x00000003;
-#[cfg(target_os = "linux")]
-pub const ETHTOOL_GSET: u32 = 0x00000001;
-#[cfg(target_os = "linux")]
-pub const ETHTOOL_GLINK: u32 = 0x0000000a;
 
 // If flags
 pub const IFF_UP: i16 = 0x1;
@@ -129,39 +117,6 @@ pub struct EthtoolDrvInfo {
     pub regdump_len: u32,
 }
 
-
-
-#[repr(C)]
-#[derive(Debug, Default)]
-#[cfg(target_os = "linux")]
-pub struct EthtoolValue {
-    pub cmd: u32,
-    pub data: u32,
-}
-
-#[repr(C)]
-#[derive(Debug, Default)]
-#[cfg(target_os = "linux")]
-pub struct EthtoolCmd {
-    pub cmd: u32,
-    pub supported: u32,
-    pub advertising: u32,
-    pub speed: u16,
-    pub duplex: u8,
-    pub port: u8,
-    pub phy_address: u8,
-    pub transceiver: u8,
-    pub autoneg: u8,
-    pub mdio_support: u8,
-    pub maxtxpkt: u32,
-    pub maxrxpkt: u32,
-    pub speed_hi: u16,
-    pub eth_tp_mdix: u8,
-    pub eth_tp_mdix_ctrl: u8,
-    pub lp_advertising: u32,
-    pub reserved: [u32; 2],
-}
-
 // IOCTL Functions
 
 #[cfg(target_os = "linux")]
@@ -172,7 +127,6 @@ nix::ioctl_read_bad!(ioctl_get_mtu, SIOCGIFMTU, IfReq);
 nix::ioctl_read_bad!(ioctl_get_metric, SIOCGIFMETRIC, IfReq);
 #[cfg(target_os = "macos")]
 nix::ioctl_read_bad!(ioctl_get_media, SIOCGIFMEDIA, IfMediaReq);
-
 
 
 pub struct Interface {
@@ -385,7 +339,7 @@ impl Interface {
         rt.block_on(async {
             let (connection, mut handle, _) = ethtool::new_connection()
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-            
+
             tokio::spawn(connection);
 
             let mut link_mode_handle = handle
@@ -396,10 +350,10 @@ impl Interface {
 
             if let Ok(Some(msg)) = link_mode_handle.try_next().await {
                 use ethtool::{EthtoolAttr, EthtoolLinkModeAttr, EthtoolLinkModeDuplex};
-                
+
                 let mut speed: u32 = 0;
                 let mut duplex_str = "unknown";
-                
+
                 for nla in &msg.payload.nlas {
                     if let EthtoolAttr::LinkMode(attr) = nla {
                         match attr {
@@ -442,7 +396,7 @@ impl Interface {
         rt.block_on(async {
             let (connection, mut handle, _) = ethtool::new_connection()
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-            
+
             tokio::spawn(connection);
 
             let mut ring_handle = handle
@@ -453,10 +407,10 @@ impl Interface {
 
             if let Ok(Some(msg)) = ring_handle.try_next().await {
                 use ethtool::{EthtoolAttr, EthtoolRingAttr};
-                
+
                 let mut rx: u32 = 0;
                 let mut tx: u32 = 0;
-                
+
                 for nla in &msg.payload.nlas {
                     if let EthtoolAttr::Ring(attr) = nla {
                         match attr {
@@ -466,7 +420,7 @@ impl Interface {
                         }
                     }
                 }
-                
+
                 Ok((rx, tx))
             } else {
                 Ok((0, 0))
@@ -490,7 +444,7 @@ impl Interface {
         rt.block_on(async {
             let (connection, mut handle, _) = ethtool::new_connection()
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-            
+
             tokio::spawn(connection);
 
             let mut channel_handle = handle
@@ -501,12 +455,12 @@ impl Interface {
 
             if let Ok(Some(msg)) = channel_handle.try_next().await {
                 use ethtool::{EthtoolAttr, EthtoolChannelAttr};
-                
+
                 let mut rx: u32 = 0;
                 let mut tx: u32 = 0;
                 let mut other: u32 = 0;
                 let mut combined: u32 = 0;
-                
+
                 for nla in &msg.payload.nlas {
                     if let EthtoolAttr::Channel(attr) = nla {
                         match attr {
@@ -518,7 +472,7 @@ impl Interface {
                         }
                     }
                 }
-                
+
                 Ok((rx, tx, other, combined))
             } else {
                 Ok((0, 0, 0, 0))
@@ -542,7 +496,7 @@ impl Interface {
         rt.block_on(async {
             let (connection, mut handle, _) = ethtool::new_connection()
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-            
+
             tokio::spawn(connection);
 
             let mut feature_handle = handle
@@ -553,9 +507,9 @@ impl Interface {
 
             if let Ok(Some(msg)) = feature_handle.try_next().await {
                 use ethtool::{EthtoolAttr, EthtoolFeatureAttr};
-                
+
                 let mut features = Vec::new();
-                
+
                 for nla in &msg.payload.nlas {
                     if let EthtoolAttr::Feature(attr) = nla {
                         if let EthtoolFeatureAttr::Active(bits) = attr {
@@ -585,7 +539,7 @@ impl Interface {
                         }
                     }
                 }
-                
+
                 Ok(features)
             } else {
                 Ok(Vec::new())
