@@ -283,12 +283,12 @@ impl Interface {
         // sa_data is [i8; 14]. MAC is first 6.
         Ok(format_smolstr!(
             "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-            addr[0] as u8,
-            addr[1] as u8,
-            addr[2] as u8,
-            addr[3] as u8,
-            addr[4] as u8,
-            addr[5] as u8
+            addr[0],
+            addr[1],
+            addr[2],
+            addr[3],
+            addr[4],
+            addr[5]
         ))
     }
 
@@ -392,13 +392,15 @@ impl Interface {
     /// Get driver information using ethtool ioctl
     #[cfg(target_os = "linux")]
     pub fn ethtool_drvinfo(&self) -> io::Result<EthtoolDrvInfo> {
-        let mut info: EthtoolDrvInfo = Default::default();
-        info.cmd = ETHTOOL_GDRVINFO;
+        let mut info: EthtoolDrvInfo = EthtoolDrvInfo {
+            cmd: ETHTOOL_GDRVINFO,
+            ..Default::default()
+        };
 
         let mut req = IfReq::new(&self.name);
         req.ifr_ifru.ifru_data = &mut info as *mut _ as *mut c_void;
 
-        unsafe { ioctl_ethtool(self.sock.as_raw_fd(), &mut req) }
+        unsafe { ioctl_ethtool(self.sock.as_raw_fd(), &req) }
             .map_err(|e| io::Error::from_raw_os_error(e as i32))?;
         Ok(info)
     }
@@ -417,11 +419,11 @@ impl Interface {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_io()
             .build()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
 
         rt.block_on(async {
             let (connection, mut handle, _) =
-                ethtool::new_connection().map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                ethtool::new_connection().map_err(io::Error::other)?;
 
             tokio::spawn(connection);
 
@@ -474,11 +476,11 @@ impl Interface {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_io()
             .build()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
 
         rt.block_on(async {
             let (connection, mut handle, _) =
-                ethtool::new_connection().map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                ethtool::new_connection().map_err(io::Error::other)?;
 
             tokio::spawn(connection);
 
@@ -521,11 +523,11 @@ impl Interface {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_io()
             .build()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
 
         rt.block_on(async {
             let (connection, mut handle, _) =
-                ethtool::new_connection().map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                ethtool::new_connection().map_err(io::Error::other)?;
 
             tokio::spawn(connection);
 
@@ -576,11 +578,11 @@ impl Interface {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_io()
             .build()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
 
         rt.block_on(async {
             let (connection, mut handle, _) =
-                ethtool::new_connection().map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                ethtool::new_connection().map_err(io::Error::other)?;
 
             tokio::spawn(connection);
 
@@ -596,30 +598,28 @@ impl Interface {
                 let mut features = Vec::new();
 
                 for nla in &msg.payload.nlas {
-                    if let EthtoolAttr::Feature(attr) = nla {
-                        if let EthtoolFeatureAttr::Active(bits) = attr {
-                            for bit in bits {
-                                if bit.value {
-                                    let feature_name = match bit.name.as_str() {
-                                        "tx-tcp-segmentation" => "tso",
-                                        "tx-generic-segmentation" => "gso",
-                                        "rx-gro" => "gro",
-                                        "rx-lro" => "lro",
-                                        "rx-checksum" => "rx-csum",
-                                        "tx-checksum-ip-generic" => "tx-csum",
-                                        "tx-checksum-ipv4" => "tx-csum-ipv4",
-                                        "tx-checksum-ipv6" => "tx-csum-ipv6",
-                                        "tx-scatter-gather" => "sg",
-                                        "tx-scatter-gather-fraglist" => "sg-frag",
-                                        "tx-vlan-hw-insert" => "tx-vlan",
-                                        "rx-vlan-hw-parse" => "rx-vlan",
-                                        "highdma" => "highdma",
-                                        "rx-hashing" => "rxhash",
-                                        "rx-ntuple-filter" => "ntuple",
-                                        other => other,
-                                    };
-                                    features.push(SmolStr::from(feature_name));
-                                }
+                    if let EthtoolAttr::Feature(EthtoolFeatureAttr::Active(bits)) = nla {
+                        for bit in bits {
+                            if bit.value {
+                                let feature_name = match bit.name.as_str() {
+                                    "tx-tcp-segmentation" => "tso",
+                                    "tx-generic-segmentation" => "gso",
+                                    "rx-gro" => "gro",
+                                    "rx-lro" => "lro",
+                                    "rx-checksum" => "rx-csum",
+                                    "tx-checksum-ip-generic" => "tx-csum",
+                                    "tx-checksum-ipv4" => "tx-csum-ipv4",
+                                    "tx-checksum-ipv6" => "tx-csum-ipv6",
+                                    "tx-scatter-gather" => "sg",
+                                    "tx-scatter-gather-fraglist" => "sg-frag",
+                                    "tx-vlan-hw-insert" => "tx-vlan",
+                                    "rx-vlan-hw-parse" => "rx-vlan",
+                                    "highdma" => "highdma",
+                                    "rx-hashing" => "rxhash",
+                                    "rx-ntuple-filter" => "ntuple",
+                                    other => other,
+                                };
+                                features.push(SmolStr::from(feature_name));
                             }
                         }
                     }

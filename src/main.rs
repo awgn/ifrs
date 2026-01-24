@@ -58,7 +58,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     let matcher = Matcher {
-        keywords: cli.keywords.into_iter().map(SmolStr::from).collect(),
+        keywords: cli.keywords.into_iter().collect(),
         ipv4: cli.ipv4,
         ipv6: cli.ipv6,
         running: cli.running,

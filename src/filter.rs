@@ -222,7 +222,7 @@ impl CollectedInterface {
 
         let is_up = iif.is_up();
         let link_detected = iif.ethtool_link().unwrap_or(false);
-        let mac = iif.mac().ok().filter(|m| !m.is_empty()).map(SmolStr::from);
+        let mac = iif.mac().ok().filter(|m| !m.is_empty());
 
         let ipv4 = iif.inet_addrs();
         let ipv6 = proc::get_inet6_addr(name).unwrap_or_default();

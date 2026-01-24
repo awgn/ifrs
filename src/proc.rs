@@ -106,7 +106,7 @@ pub fn get_if_list() -> Result<Vec<LinuxNic>> {
     Ok(ret
         .into_iter()
         .map(|name| LinuxNic {
-            name: SmolStr::from(name),
+            name,
             netns: None,
         })
         .collect())
