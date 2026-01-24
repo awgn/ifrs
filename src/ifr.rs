@@ -5,6 +5,9 @@ use std::os::fd::{AsRawFd, OwnedFd};
 use nix::sys::socket::{socket, AddressFamily, SockFlag, SockType};
 use libc::{c_char, c_int, c_ulong, c_void};
 
+#[cfg(target_os = "linux")]
+use futures::stream::TryStreamExt;
+
 #[cfg(target_os = "macos")]
 use crate::macos;
 
@@ -263,224 +266,7 @@ impl Interface {
         SmolStr::from(ret.join(" "))
     }
 
-    pub fn ethtool_drvinfo(&self) -> io::Result<EthtoolDrvInfo> {
-        #[cfg(target_os = "linux")]
-        {
-            let mut info: EthtoolDrvInfo = Default::default();
-            info.cmd = ETHTOOL_GDRVINFO;
 
-            let mut req = IfReq::new(&self.name);
-            req.ifr_ifru.ifru_data = &mut info as *mut _ as *mut c_void;
-
-            unsafe { ioctl_ethtool(self.sock.as_raw_fd(), &mut req) }.map_err(|e| io::Error::from_raw_os_error(e as i32))?;
-            Ok(info)
-        }
-
-        #[cfg(target_os = "macos")]
-        {
-            if let Some((driver, version, bus)) = macos::get_driver_info(&self.name) {
-                let mut info: EthtoolDrvInfo = Default::default();
-                // Copy strings to info.driver, info.version, info.bus_info
-                let copy_str = |dest: &mut [c_char], src: &str| {
-                    let bytes = src.as_bytes();
-                    for (i, b) in bytes.iter().enumerate() {
-                        if i >= dest.len() - 1 { break; }
-                        dest[i] = *b as c_char;
-                    }
-                    // Null terminate if space permits or if truncated
-                    let last_idx = std::cmp::min(bytes.len(), dest.len() - 1);
-                    dest[last_idx] = 0;
-                };
-
-                copy_str(&mut info.driver, &driver);
-                copy_str(&mut info.version, &version);
-                copy_str(&mut info.bus_info, &bus);
-
-                Ok(info)
-            } else {
-                Err(io::Error::new(io::ErrorKind::NotFound, "Driver info not found"))
-            }
-        }
-
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-        {
-            Err(io::Error::new(io::ErrorKind::Unsupported, "Not supported on this OS"))
-        }
-    }
-
-    pub fn media(&self) -> io::Result<SmolStr> {
-        #[cfg(target_os = "linux")]
-        {
-            let mut cmd: EthtoolCmd = Default::default();
-            cmd.cmd = ETHTOOL_GSET;
-
-            let mut req = IfReq::new(&self.name);
-            req.ifr_ifru.ifru_data = &mut cmd as *mut _ as *mut libc::c_void;
-
-            if unsafe { ioctl_ethtool(self.sock.as_raw_fd(), &mut req) }.is_ok() {
-                let speed = (cmd.speed_hi as u32) << 16 | (cmd.speed as u32);
-                let duplex = if cmd.duplex == 0x01 { "full" } else if cmd.duplex == 0x00 { "half" } else { "unknown" };
-                let port = match cmd.port {
-                    0x00 => "TP",
-                    0x01 => "AUI",
-                    0x02 => "MII",
-                    0x03 => "FIBRE",
-                    0x04 => "BNC",
-                    _ => "unknown",
-                };
-                if speed == 0 || speed == 0xFFFF || speed == 0xFFFFFFFF {
-                    return Ok(format!("{} (unknown speed)", port).into());
-                }
-                return Ok(format!("{} {}Mb/s {}", port, speed, duplex).into());
-            }
-            Ok(SmolStr::new_static("unknown"))
-        }
-
-        #[cfg(target_os = "macos")]
-        {
-            let mut req: IfMediaReq = unsafe { std::mem::zeroed() };
-            let bytes = self.name.as_bytes();
-            let len = std::cmp::min(bytes.len(), 15);
-            for (i, &byte) in bytes.iter().enumerate().take(len) {
-                req.ifm_name[i] = byte as libc::c_char;
-            }
-
-            // On macOS, SIOCGIFMEDIA often requires a larger buffer or specific socket.
-            // We use a dummy list to ensure the structure is fully populated if needed.
-            let mut res = unsafe { ioctl_get_media(self.sock.as_raw_fd(), &mut req) };
-
-            if res.is_err() {
-                // Try with different socket families as some drivers (like Wi-Fi) are picky
-                for family in [libc::AF_INET6, libc::AF_LINK] {
-                    let s = unsafe { libc::socket(family, libc::SOCK_DGRAM, 0) };
-                    if s >= 0 {
-                        res = unsafe { ioctl_get_media(s, &mut req) };
-                        unsafe { libc::close(s) };
-                        if res.is_ok() { break; }
-                    }
-                }
-            }
-
-            if res.is_ok() {
-                let active = req.ifm_active;
-                let type_ = (active & 0x000000f0) >> 4;
-                let subtype = active & 0x0000000f;
-
-                let type_str = match type_ {
-                    2 => "Ethernet",
-                    8 => "Wi-Fi",
-                    _ => "Other",
-                };
-
-                let subtype_str = if type_ == 2 {
-                    match subtype {
-                        0 => "autoselect",
-                        3 => "10baseT",
-                        6 => "100baseTX",
-                        12 => "1000baseT",
-                        19 => "10GbaseT",
-                        _ => "unknown",
-                    }
-                } else if type_ == 8 {
-                    match subtype {
-                        0 => "autoselect",
-                        3 => "802.11b",
-                        4 => "802.11g",
-                        5 => "802.11a",
-                        6 => "802.11n",
-                        8 => "802.11ac",
-                        11 => "802.11ax",
-                        _ => "unknown",
-                    }
-                } else {
-                    "unknown"
-                };
-
-                let mut options = Vec::new();
-                if active & 0x00010000 != 0 { options.push("full-duplex"); }
-                if active & 0x00020000 != 0 { options.push("half-duplex"); }
-
-                if options.is_empty() {
-                    use smol_str::format_smolstr;
-
-                    return Ok(format_smolstr!("{} {}", type_str, subtype_str));
-                } else {
-                    use smol_str::format_smolstr;
-
-                    return Ok(format_smolstr!("{} {} <{}>", type_str, subtype_str, options.join(",")));
-                }
-            }
-
-            // Fallback for macOS: use networksetup if ioctl fails or returns generic info
-            let output = std::process::Command::new("networksetup")
-                .arg("-getmedia")
-                .arg(&*self.name)
-                .output();
-
-            if let Ok(out) = output {
-                let s = String::from_utf8_lossy(&out.stdout);
-                for line in s.lines() {
-                    if line.starts_with("Current:") {
-                        let val = line.trim_start_matches("Current:").trim();
-                        if val != "autoselect" && !val.is_empty() {
-                            return Ok(val.into());
-                        }
-                    }
-                }
-            }
-
-            Ok(SmolStr::new_static("unknown"))
-        }
-
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-        {
-            Ok("unknown".to_string())
-        }
-    }
-
-
-
-    pub fn ethtool_link(&self) -> io::Result<bool> {
-        #[cfg(target_os = "linux")]
-        {
-            let mut val = EthtoolValue {
-                cmd: ETHTOOL_GLINK,
-                ..Default::default()
-            };
-
-            let mut req = IfReq::new(&self.name);
-            req.ifr_ifru.ifru_data = &mut val as *mut _ as *mut c_void;
-
-            unsafe { ioctl_ethtool(self.sock.as_raw_fd(), &req) }.map_err(|e| io::Error::from_raw_os_error(e as i32))?;
-            Ok(val.data != 0)
-        }
-
-        #[cfg(target_os = "macos")]
-        {
-            let mut req: IfMediaReq = unsafe { std::mem::zeroed() };
-            let bytes = self.name.as_bytes();
-            let len = std::cmp::min(bytes.len(), 15);
-            for (i, &byte) in bytes.iter().enumerate().take(len) {
-                req.ifm_name[i] = byte as c_char;
-            }
-
-            match unsafe { ioctl_get_media(self.sock.as_raw_fd(), &mut req) } {
-                Ok(_) => {
-                    // IFM_AVALID = 0x00000001, IFM_ACTIVE = 0x00000002
-                    Ok((req.ifm_status & 0x00000001 != 0) && (req.ifm_status & 0x00000002 != 0))
-                }
-                Err(_) => {
-                    // Fallback to IFF_RUNNING if SIOCGIFMEDIA is not supported (e.g. some virtual interfaces)
-                    Ok(self.flags().map(|f| f & 0x40 != 0).unwrap_or(false))
-                }
-            }
-        }
-
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-        {
-            Err(io::Error::new(io::ErrorKind::Unsupported, "Not supported on this OS"))
-        }
-    }
 
     #[cfg(target_os = "linux")]
     pub fn mac(&self) -> io::Result<SmolStr> {
@@ -557,5 +343,259 @@ impl Interface {
             }
         }
         ret
+    }
+
+    /// Get link status using ethtool
+    #[cfg(target_os = "linux")]
+    pub fn ethtool_link(&self) -> io::Result<bool> {
+        Ok(self.is_running())
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn ethtool_link(&self) -> io::Result<bool> {
+        Ok(self.is_running())
+    }
+
+    /// Get driver information using ethtool ioctl
+    #[cfg(target_os = "linux")]
+    pub fn ethtool_drvinfo(&self) -> io::Result<EthtoolDrvInfo> {
+        let mut info: EthtoolDrvInfo = Default::default();
+        info.cmd = ETHTOOL_GDRVINFO;
+
+        let mut req = IfReq::new(&self.name);
+        req.ifr_ifru.ifru_data = &mut info as *mut _ as *mut c_void;
+
+        unsafe { ioctl_ethtool(self.sock.as_raw_fd(), &mut req) }
+            .map_err(|e| io::Error::from_raw_os_error(e as i32))?;
+        Ok(info)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn ethtool_drvinfo(&self) -> io::Result<EthtoolDrvInfo> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "Not supported on this OS"))
+    }
+
+    /// Get media/link information using ethtool
+    #[cfg(target_os = "linux")]
+    pub fn media(&self) -> io::Result<SmolStr> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .build()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+        rt.block_on(async {
+            let (connection, mut handle, _) = ethtool::new_connection()
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            
+            tokio::spawn(connection);
+
+            let mut link_mode_handle = handle
+                .link_mode()
+                .get(Some(self.name.as_str()))
+                .execute()
+                .await;
+
+            if let Ok(Some(msg)) = link_mode_handle.try_next().await {
+                use ethtool::{EthtoolAttr, EthtoolLinkModeAttr, EthtoolLinkModeDuplex};
+                
+                let mut speed: u32 = 0;
+                let mut duplex_str = "unknown";
+                
+                for nla in &msg.payload.nlas {
+                    if let EthtoolAttr::LinkMode(attr) = nla {
+                        match attr {
+                            EthtoolLinkModeAttr::Speed(s) => speed = *s,
+                            EthtoolLinkModeAttr::Duplex(d) => {
+                                duplex_str = match d {
+                                    EthtoolLinkModeDuplex::Full => "full",
+                                    EthtoolLinkModeDuplex::Half => "half",
+                                    _ => "unknown",
+                                };
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
+                if speed == 0 || speed == 0xFFFF || speed == 0xFFFFFFFF {
+                    return Ok(SmolStr::from("TP (unknown speed)"));
+                }
+                return Ok(SmolStr::from(format!("TP {}Mb/s {}", speed, duplex_str)));
+            }
+
+            Ok(SmolStr::new_static("unknown"))
+        })
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn media(&self) -> io::Result<SmolStr> {
+        Ok(SmolStr::new_static("unknown"))
+    }
+
+    /// Get ring parameters (RX/TX ring sizes)
+    #[cfg(target_os = "linux")]
+    pub fn ethtool_rings(&self) -> io::Result<(u32, u32)> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .build()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+        rt.block_on(async {
+            let (connection, mut handle, _) = ethtool::new_connection()
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            
+            tokio::spawn(connection);
+
+            let mut ring_handle = handle
+                .ring()
+                .get(Some(self.name.as_str()))
+                .execute()
+                .await;
+
+            if let Ok(Some(msg)) = ring_handle.try_next().await {
+                use ethtool::{EthtoolAttr, EthtoolRingAttr};
+                
+                let mut rx: u32 = 0;
+                let mut tx: u32 = 0;
+                
+                for nla in &msg.payload.nlas {
+                    if let EthtoolAttr::Ring(attr) = nla {
+                        match attr {
+                            EthtoolRingAttr::Rx(val) => rx = *val,
+                            EthtoolRingAttr::Tx(val) => tx = *val,
+                            _ => {}
+                        }
+                    }
+                }
+                
+                Ok((rx, tx))
+            } else {
+                Ok((0, 0))
+            }
+        })
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn ethtool_rings(&self) -> io::Result<(u32, u32)> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "Ring info not available on this OS"))
+    }
+
+    /// Get channel parameters (number of RX/TX queues)
+    #[cfg(target_os = "linux")]
+    pub fn ethtool_channels(&self) -> io::Result<(u32, u32, u32, u32)> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .build()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+        rt.block_on(async {
+            let (connection, mut handle, _) = ethtool::new_connection()
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            
+            tokio::spawn(connection);
+
+            let mut channel_handle = handle
+                .channel()
+                .get(Some(self.name.as_str()))
+                .execute()
+                .await;
+
+            if let Ok(Some(msg)) = channel_handle.try_next().await {
+                use ethtool::{EthtoolAttr, EthtoolChannelAttr};
+                
+                let mut rx: u32 = 0;
+                let mut tx: u32 = 0;
+                let mut other: u32 = 0;
+                let mut combined: u32 = 0;
+                
+                for nla in &msg.payload.nlas {
+                    if let EthtoolAttr::Channel(attr) = nla {
+                        match attr {
+                            EthtoolChannelAttr::RxCount(val) => rx = *val,
+                            EthtoolChannelAttr::TxCount(val) => tx = *val,
+                            EthtoolChannelAttr::OtherCount(val) => other = *val,
+                            EthtoolChannelAttr::CombinedCount(val) => combined = *val,
+                            _ => {}
+                        }
+                    }
+                }
+                
+                Ok((rx, tx, other, combined))
+            } else {
+                Ok((0, 0, 0, 0))
+            }
+        })
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn ethtool_channels(&self) -> io::Result<(u32, u32, u32, u32)> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "Channel info not available on this OS"))
+    }
+
+    /// Get active features/offloads (TSO, GSO, GRO, checksumming, etc.)
+    #[cfg(target_os = "linux")]
+    pub fn ethtool_features(&self) -> io::Result<Vec<SmolStr>> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .build()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+        rt.block_on(async {
+            let (connection, mut handle, _) = ethtool::new_connection()
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            
+            tokio::spawn(connection);
+
+            let mut feature_handle = handle
+                .feature()
+                .get(Some(self.name.as_str()))
+                .execute()
+                .await;
+
+            if let Ok(Some(msg)) = feature_handle.try_next().await {
+                use ethtool::{EthtoolAttr, EthtoolFeatureAttr};
+                
+                let mut features = Vec::new();
+                
+                for nla in &msg.payload.nlas {
+                    if let EthtoolAttr::Feature(attr) = nla {
+                        if let EthtoolFeatureAttr::Active(bits) = attr {
+                            for bit in bits {
+                                if bit.value {
+                                    let feature_name = match bit.name.as_str() {
+                                        "tx-tcp-segmentation" => "tso",
+                                        "tx-generic-segmentation" => "gso",
+                                        "rx-gro" => "gro",
+                                        "rx-lro" => "lro",
+                                        "rx-checksum" => "rx-csum",
+                                        "tx-checksum-ip-generic" => "tx-csum",
+                                        "tx-checksum-ipv4" => "tx-csum-ipv4",
+                                        "tx-checksum-ipv6" => "tx-csum-ipv6",
+                                        "tx-scatter-gather" => "sg",
+                                        "tx-scatter-gather-fraglist" => "sg-frag",
+                                        "tx-vlan-hw-insert" => "tx-vlan",
+                                        "rx-vlan-hw-parse" => "rx-vlan",
+                                        "highdma" => "highdma",
+                                        "rx-hashing" => "rxhash",
+                                        "rx-ntuple-filter" => "ntuple",
+                                        other => other,
+                                    };
+                                    features.push(SmolStr::from(feature_name));
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                Ok(features)
+            } else {
+                Ok(Vec::new())
+            }
+        })
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn ethtool_features(&self) -> io::Result<Vec<SmolStr>> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "Feature info not available on this OS"))
     }
 }

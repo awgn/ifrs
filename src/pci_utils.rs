@@ -1,6 +1,6 @@
 #[cfg(not(target_os = "macos"))]
 use anyhow::Result;
-#[cfg(all(feature = "pci-info", not(target_os = "macos")))]
+#[cfg(not(target_os = "macos"))]
 use smol_str::SmolStr;
 #[cfg(not(target_os = "macos"))]
 use std::collections::HashMap;
@@ -194,7 +194,7 @@ pub fn get_pci_devices() -> Result<HashMap<SmolStr, PciDeviceInfo>> {
 }
 
 #[cfg(all(not(feature = "pci-info"), not(target_os = "macos")))]
-pub fn get_pci_devices() -> Result<HashMap<String, PciDeviceInfo>> {
+pub fn get_pci_devices() -> Result<HashMap<SmolStr, PciDeviceInfo>> {
     Ok(HashMap::new())
 }
 

@@ -133,6 +133,12 @@ pub struct CollectedInterface {
     pub metric: i32,
     pub media: SmolStr,
     pub stats: Option<proc::Stats>,
+    #[cfg(target_os = "linux")]
+    pub rings: Option<(u32, u32)>, // rx, tx
+    #[cfg(target_os = "linux")]
+    pub channels: Option<(u32, u32, u32, u32)>, // rx, tx, other, combined
+    #[cfg(target_os = "linux")]
+    pub features: Vec<SmolStr>, // active offload features
 }
 
 impl CollectedInterface {
@@ -178,6 +184,13 @@ impl CollectedInterface {
 
         let stats = proc::get_stats(name).ok();
 
+        #[cfg(target_os = "linux")]
+        let rings = iif.ethtool_rings().ok();
+        #[cfg(target_os = "linux")]
+        let channels = iif.ethtool_channels().ok();
+        #[cfg(target_os = "linux")]
+        let features = iif.ethtool_features().unwrap_or_default();
+
         Ok(Self {
             name: name.clone(),
             netns: nic.netns.clone(),
@@ -193,6 +206,12 @@ impl CollectedInterface {
             metric,
             media,
             stats,
+            #[cfg(target_os = "linux")]
+            rings,
+            #[cfg(target_os = "linux")]
+            channels,
+            #[cfg(target_os = "linux")]
+            features,
         })
     }
 
@@ -211,40 +230,40 @@ impl CollectedInterface {
 
         println!();
 
-        let indent = "    ";
+        let indent = "  ";
 
         if let Some(mac) = &self.mac {
-            println!("{}MAC:     {}", indent, mac.blue());
+            println!("{}MAC:      {}", indent, mac.blue());
         }
 
         for (addr, _mask, prefix) in &self.ipv4 {
-            println!("{}IPv4:    {}/{}", indent, addr.blue(), prefix);
+            println!("{}IPv4:     {}/{}", indent, addr.blue(), prefix);
         }
 
         for (addr, plen, _scope) in &self.ipv6 {
-             println!("{}IPv6:    {}/{}", indent, addr.blue(), plen);
+             println!("{}IPv6:     {}/{}", indent, addr.blue(), plen);
         }
 
         if !self.flags_str.is_empty() {
-             println!("{}Flags:   {}", indent, self.flags_str.dimmed());
+             println!("{}Flags:    {}", indent, self.flags_str.dimmed());
         }
 
         if let Some((drv, ver, bus)) = &self.driver_info {
-             println!("{}Driver:  {} (v: {})", indent, drv.blue().bold(), ver);
+             println!("{}Driver:   {} (v: {})", indent, drv.blue().bold(), ver);
              if !bus.is_empty() {
-                  println!("{}Bus:     {}", indent, bus);
+                  println!("{}Bus:      {}", indent, bus);
              }
         }
 
         if let Some(pci_info) = &self.pci_info {
             if let Some(addr) = pci_info.pci_address() {
-                println!("{}PCI:     {}", indent, addr.bright_blue());
+                println!("{}PCI:      {}", indent, addr.bright_blue());
             }
 
             if let (Some(vendor), Some(device)) = (&pci_info.vendor_name, &pci_info.device_name) {
-                println!("{}Device:  {} {}", indent, vendor.bright_blue(), device.bright_blue());
+                println!("{}Device:   {} {}", indent, vendor.bright_blue(), device.bright_blue());
             } else if pci_info.vendor_id != 0 || pci_info.device_id != 0 {
-                println!("{}Device:  [{:04x}:{:04x}]", indent, pci_info.vendor_id, pci_info.device_id);
+                println!("{}Device:   [{:04x}:{:04x}]", indent, pci_info.vendor_id, pci_info.device_id);
             }
 
             if verbose {
@@ -252,15 +271,33 @@ impl CollectedInterface {
             }
         }
 
-        println!("{}MTU:     {} (Metric: {})", indent, self.mtu, self.metric);
+        println!("{}MTU:      {} (Metric: {})", indent, self.mtu, self.metric);
 
         if self.media != "unknown" {
-            println!("{}Media:   {}", indent, self.media.dimmed());
+            println!("{}Media:    {}", indent, self.media.dimmed());
+        }
+
+        #[cfg(target_os = "linux")]
+        if verbose {
+            if !self.features.is_empty() {
+                println!("{}Features: {}", indent, self.features.join(" "));
+            }
+            if let Some((rx, tx)) = self.rings {
+                if rx > 0 || tx > 0 {
+                    println!("{}Rings:    RX: {}, TX: {}", indent, rx, tx);
+                }
+            }
+            if let Some((rx, tx, other, combined)) = self.channels {
+                if rx > 0 || tx > 0 || other > 0 || combined > 0 {
+                    println!("{}Channels: RX: {}, TX: {}, Other: {}, Combined: {}",
+                        indent, rx, tx, other, combined);
+                }
+            }
         }
 
         if let Some(stats) = &self.stats {
              if stats.rx_bytes > 0 || stats.tx_bytes > 0 {
-                  println!("{}Stats:   RX: {} bytes ({} pkts), TX: {} bytes ({} pkts)",
+                  println!("{}Stats:    RX: {} bytes ({} pkts), TX: {} bytes ({} pkts)",
                       indent,
                       stats.rx_bytes, stats.rx_packets,
                       stats.tx_bytes, stats.tx_packets
